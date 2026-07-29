@@ -65,6 +65,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The dev signing key protects nothing (docs/SECURITY.md §4) - its only
+      # job is keeping the signature-verification path exercised on every
+      # build so it cannot silently rot before a production key exists. It is
+      # never committed (tools/keys/*.pem is gitignored), so CI generates a
+      # fresh, disposable one every run. tools/check_release.py separately
+      # proves this key can never reach a production build.
+      - name: Generate ephemeral dev signing key
+        run: |
+          mkdir -p tools/keys
+          openssl ecparam -name prime256v1 -genkey -noout \
+            -out tools/keys/dev_ota_signing.pem
       - name: Build
         uses: espressif/esp-idf-ci-action@v1
         with:

@@ -13,7 +13,12 @@ Generate one locally:
 
 ```bash
 espsecure.py generate_signing_key --version 2 tools/keys/dev_ota_signing.pem
+# or, equivalently, since the dev key is P-256 and protects nothing:
+openssl ecparam -name prime256v1 -genkey -noout -out tools/keys/dev_ota_signing.pem
 ```
+
+CI generates a fresh, disposable one on every run (`.github/workflows/ci.yml`) —
+there is nothing to keep in sync locally.
 
 `.gitignore` excludes `*.pem`/`*.der` in this directory. `tools/check_release.py`
 fails a **production** build that contains dev key material — see gate 4 in
