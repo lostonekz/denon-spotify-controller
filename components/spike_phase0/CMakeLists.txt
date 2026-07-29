@@ -11,10 +11,12 @@ idf_component_register(
     SRCS        "spike_report.c"
                 "spike_display_load.c"
                 "spike_net_load.c"
+                "spike_load_tasks.c"
                 "spike_runner.c"
     INCLUDE_DIRS "include"
     REQUIRES     bsp_board
     PRIV_REQUIRES esp_lcd esp_timer esp_wifi esp_http_client esp-tls nvs_flash
                   mbedtls esp_driver_gpio esp_driver_i2c esp_driver_ledc driver
-                  esp_psram esp_hw_support
+                  esp_psram esp_hw_support lwip esp_jpeg
+    EMBED_FILES  "assets/test_cover_640.jpg"
 )

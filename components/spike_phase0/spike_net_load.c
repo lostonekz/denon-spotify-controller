@@ -10,7 +10,6 @@
 #include "spike_net_load.h"
 
 #include <inttypes.h>   /* PRIu32 -- see spike_report.c for why this matters */
-#include <stdio.h>
 #include <string.h>
 
 #include "esp_crt_bundle.h"
@@ -23,21 +22,28 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
+#include "lwip/ip_addr.h"
+#include "ping/ping_sock.h"
+
+/* Small, different host than the main spike target -- see spike_net_diag(). */
+#define SPIKE_NET_DIAG_SMALL_URL "https://www.google.com/robots.txt"
 
 static const char *TAG = "spike0.net";
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-/* Bounded Range request, not the whole file: a plain GET against a 100 MB+
- * file would run well past the spike duration on realistic WiFi throughput,
- * and this component only makes ONE request per run (see net_load_task) --
- * a loop of fresh reconnects against the same public host every ~2 s got
- * every connection but the last dropped or 429'd during Phase 0 bring-up,
- * which is the server correctly treating that pattern as abuse. One bounded
- * range request is both realistic (an OTA/artwork fetch is one connection,
- * not a poll loop) and reliably finishes inside a 120 s run. */
-#define SPIKE_NET_RANGE_BYTES (20u * 1024u * 1024u)
+/* No Range header: the configured URL (Cloudflare's speed-test endpoint,
+ * see main/Kconfig.projbuild) takes its size via a query parameter and
+ * ignores Range entirely. A prior version used a 20 MiB Range request
+ * against a different host (Hetzner) that consistently failed every
+ * attempt with a TLS read error while parsing response headers -- a small
+ * download from a THIRD host (google.com) using this exact same code path
+ * succeeded immediately, which ruled out this board's WiFi/TLS/HTTP stack
+ * and the Range mechanism itself as the cause. Root cause on the Hetzner
+ * side was never identified; switched hosts instead of continuing to
+ * debug a specific third-party server's behavior. */
 
 static EventGroupHandle_t s_wifi_events;
 static int s_retries;
@@ -170,10 +176,6 @@ void spike_net_download(const char *url, spike_net_result_t *out)
         return;
     }
 
-    char range[32];
-    snprintf(range, sizeof(range), "bytes=0-%u", SPIKE_NET_RANGE_BYTES - 1u);
-    esp_http_client_set_header(client, "Range", range);
-
     esp_err_t err = esp_http_client_perform(client);
     int64_t t1 = esp_timer_get_time();
 
@@ -203,4 +205,96 @@ void spike_net_download(const char *url, spike_net_result_t *out)
     ESP_LOGI(TAG, "downloaded %" PRIu32 " B, status %d, handshake %" PRIu32 " ms, "
                   "TLS internal peak %" PRIu32 " B",
              out->bytes, status, out->handshake_ms, out->tls_heap_peak);
+}
+
+/* ---- diagnostic: ping + small download from a different host ---- */
+
+static volatile bool s_ping_got_reply;
+
+static void on_ping_success(esp_ping_handle_t hdl, void *args)
+{
+    uint32_t elapsed_ms = 0;
+    esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_ms, sizeof(elapsed_ms));
+    ESP_LOGI(TAG, "  reply in %" PRIu32 " ms", elapsed_ms);
+    s_ping_got_reply = true;
+}
+
+static void on_ping_timeout(esp_ping_handle_t hdl, void *args)
+{
+    (void)hdl;
+    (void)args;
+    ESP_LOGW(TAG, "  timeout");
+}
+
+static void on_ping_end(esp_ping_handle_t hdl, void *args)
+{
+    (void)hdl;
+    xSemaphoreGive((SemaphoreHandle_t)args);
+}
+
+/* Sequential, not concurrent -- s_ping_got_reply and the single ping task
+ * this creates are fine to reuse across calls. Blocks for up to ~count *
+ * timeout_ms, plus a little, per call. */
+static bool ping_host(const char *label, const ip_addr_t *target)
+{
+    ESP_LOGI(TAG, "ping %s ...", label);
+    s_ping_got_reply = false;
+
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    if (done == NULL) {
+        return false;
+    }
+
+    esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+    cfg.target_addr = *target;
+    cfg.count = 3;
+
+    esp_ping_callbacks_t cbs = {
+        .cb_args         = done,
+        .on_ping_success = on_ping_success,
+        .on_ping_timeout = on_ping_timeout,
+        .on_ping_end     = on_ping_end,
+    };
+
+    esp_ping_handle_t hdl;
+    if (esp_ping_new_session(&cfg, &cbs, &hdl) != ESP_OK) {
+        ESP_LOGE(TAG, "ping %s: session create failed", label);
+        vSemaphoreDelete(done);
+        return false;
+    }
+
+    esp_ping_start(hdl);
+    xSemaphoreTake(done, pdMS_TO_TICKS(10000));
+    esp_ping_delete_session(hdl);
+    vSemaphoreDelete(done);
+
+    return s_ping_got_reply;
+}
+
+void spike_net_diag(void)
+{
+    ESP_LOGI(TAG, "=== network diagnostic: ping + small download from a "
+                  "different host, before the real spike load ===");
+
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip_info;
+    if (netif != NULL && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+        ip_addr_t gw = IPADDR4_INIT(ip_info.gw.addr);
+        bool gw_ok = ping_host("gateway", &gw);
+        ESP_LOGI(TAG, "ping gateway: %s", gw_ok ? "OK" : "FAILED / no reply");
+    } else {
+        ESP_LOGW(TAG, "could not read gateway IP -- skipping gateway ping");
+    }
+
+    ip_addr_t public_ip;
+    ipaddr_aton("8.8.8.8", &public_ip);
+    bool public_ok = ping_host("8.8.8.8", &public_ip);
+    ESP_LOGI(TAG, "ping 8.8.8.8: %s", public_ok ? "OK" : "FAILED / no reply");
+
+    spike_net_result_t r;
+    spike_net_download(SPIKE_NET_DIAG_SMALL_URL, &r);
+    ESP_LOGI(TAG, "small download (%s): %s, %" PRIu32 " bytes",
+             SPIKE_NET_DIAG_SMALL_URL, r.ok ? "OK" : "FAILED", r.bytes);
+
+    ESP_LOGI(TAG, "=== end network diagnostic ===");
 }

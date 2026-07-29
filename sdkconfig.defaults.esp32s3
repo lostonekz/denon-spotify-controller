@@ -17,6 +17,16 @@ CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
+# Tried disabling this during Phase 0 (forces WiFi/LWIP into internal SRAM,
+# off the PSRAM bus the LCD scanout uses) to see if it would fix R1's ~7%
+# combined-load drop rate. Result: dropped frames only moved from ~7.0% to
+# ~6.7% (within the run-to-run noise band already observed), while costing
+# ~12 KiB of internal SRAM -- the resource this design is actually rationed
+# against (docs/MEMORY.md §1). Not a clear enough win to keep. Reverted to
+# the original `y`. If a future feature needs more PSRAM headroom than
+# internal SRAM headroom, re-test this rather than assume the tradeoff still
+# looks the same -- the components sharing that PSRAM bus will have changed.
+
 # --- XiP-from-PSRAM: REQUIRED, not optional, once there is a PSRAM framebuffer ---
 #
 # An earlier draft of this file set FETCH_INSTRUCTIONS=n and RODATA=n, reasoning

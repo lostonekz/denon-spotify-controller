@@ -48,11 +48,26 @@ typedef struct {
     uint32_t psram_free_min;      /* bytes, MALLOC_CAP_SPIRAM   */
     uint32_t internal_largest_block;
 
-    /* --- TLS --- */
+    /* --- TLS / network ---
+     * Repeats for the run rather than a one-shot download (an independent
+     * review caught that a single bounded download can finish well inside
+     * a 120 s run and leave the rest with zero network activity, diluting
+     * the drop rate against a load source docs/RISKS.md R1 calls "a
+     * primary contender for the PSRAM bus"). bytes_downloaded and
+     * tls_heap_peak/tls_handshake_ms are totals/maxima across every
+     * attempt, not just the first. */
     uint32_t tls_heap_peak;       /* internal SRAM consumed by one session */
     uint32_t tls_handshake_ms;
     uint32_t bytes_downloaded;
     float    download_kbps;
+    uint32_t net_downloads_attempted;
+    uint32_t net_downloads_ok;
+    uint32_t net_active_ms;       /* wall-clock time actually spent inside a
+                                   * transfer attempt, success or failure --
+                                   * how much of duration_s this load source
+                                   * genuinely covered, not just whether it
+                                   * ran once. */
+    uint32_t frames_dropped_during_net;
 
     /* --- JPEG --- */
     uint32_t jpeg_decode_ms_avg;
@@ -65,6 +80,18 @@ typedef struct {
     uint32_t nvs_write_ms_max;    /* a long flash write blocks the bus */
     uint32_t nvs_writes;
     uint32_t frames_dropped_during_nvs;
+
+    /* --- run integrity ---
+     * Which load sources were configured to run, and whether they actually
+     * produced measurable activity. Without this, a run where WiFi never
+     * connected (bytes_downloaded stays 0 all run) could still print
+     * "R1 MITIGATED" -- exactly what happened once before this was added:
+     * the accepted run's TLS section read "downloaded 0.0 KB @ 0.0 KB/s"
+     * for the full 120 s and the verdict passed anyway. */
+    bool     wifi_load_enabled;
+    bool     wifi_connected;
+    bool     jpeg_load_enabled;
+    bool     nvs_load_enabled;
 
     /* --- environment --- */
     float    temp_c_start;

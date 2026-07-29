@@ -15,18 +15,24 @@ config DSC_SPIKE_WIFI_PASSWORD
     default ""
 
 config DSC_SPIKE_URL
-    string "HTTPS URL to download once per spike run"
-    default "https://ash-speed.hetzner.com/100MB.bin"
+    string "HTTPS URL to download repeatedly (with cooldown) during the spike"
+    default "https://speed.cloudflare.com/__down?bytes=20971520"
     help
-        Fetched ONCE per run, as a bounded Range request (see
-        SPIKE_NET_RANGE_BYTES in spike_net_load.c), not in a loop. A tiny
-        page (the old default, google.com) finishes instantly and measures
-        nothing -- but so does hammering the same host with a fresh TLS
-        handshake every couple of seconds for the whole run: real bring-up
-        on hardware showed a public bandwidth-test host dropping or 429-ing
-        every connection but the last when hit that way. One real,
-        sustained connection is both more realistic (an OTA/artwork fetch
-        is a single request, not a poll loop) and reliable.
+        Cloudflare's speed-test endpoint: size is set by the "bytes" query
+        parameter (20 MiB here), no Range header needed, and it exists
+        specifically to be hit repeatedly for bandwidth testing -- unlike
+        the two hosts tried before it on real hardware:
+          - A tiny page (google.com) finishes instantly and measures
+            nothing.
+          - A public bandwidth-test host on a different provider dropped or
+            429'd every connection but the first when hit every ~2 s, and
+            even a single request every ~5 s later consistently failed with
+            a TLS read error while parsing response headers -- a small
+            download from a THIRD host using the identical code path
+            succeeded immediately, which ruled out this board's WiFi/TLS
+            stack as the cause. Root cause on that host was never
+            identified; switched providers instead of continuing to debug
+            a specific third party's server behavior.
 
 endmenu
 

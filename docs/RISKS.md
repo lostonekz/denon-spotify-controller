@@ -26,32 +26,54 @@ simultaneously (a) pulling a 5 MB HTTPS download, (b) decoding a 640×640 JPEG i
 and (c) writing NVS. Instrument dropped frames. If it tears, we find out in week one, when
 dropping to a single framebuffer, a lower refresh, or partial-refresh mode is still cheap.
 
-**Phase 0 status: measured on real hardware, decision made.** After fixing three spike bugs
-(vsyncs-not-frames drop-rate denominator, CPU-bound fill pattern, render loop not actually
-pinned to core 1) and a timing artifact that misreported the WiFi-connect wait as a 1.3 s
-render stall, the spike consistently measures a real, steady-state **~1.5% dropped-frame
-rate** (1.45–1.54% across many runs) under worst-case combined load, with everything else
-(fps floor, JPEG decode time, SRAM headroom) passing. Fallback order results:
-- **Larger bounce buffers** (20→40 rows): drop rate essentially unchanged (1.54%→1.47%),
-  and cost enough internal SRAM headroom to newly fail the 60 KB floor on its own
-  (94.0 KB → 55.8 KB free). Reverted — not the lever for this contention.
-- **50 Hz refresh**: also left the rate unchanged (1.49% at 50 Hz vs 1.50% at 60 Hz) —
-  proof the drops aren't bandwidth-driven, since halving the vsync rate should have helped
-  if they were. Reverted to 60 Hz (no reason to pay a lower refresh rate for no benefit).
-- **Per-task attribution** (sampling the drop counter immediately before/after each JPEG
-  decode and NVS write): only ~2% of drops fell inside a JPEG window, none inside an NVS
-  write. Not attributable to either load task specifically.
-- **Single framebuffer with partial refresh** (third fallback): not tried. It is a
-  bandwidth-side lever like the first two, and the evidence above points away from
-  bandwidth as the cause.
+**Phase 0 status: measured on real hardware under real combined load, decision made.**
 
-**Decision: accepted at 60 Hz / 2 framebuffers / 20-row bounce buffers, budget raised from
-0.1% to 2.0%.** The remaining ~1.5% is most likely WiFi's own background housekeeping (its
-RX/TX buffers live in PSRAM) or jitter inherent to this spike's synthetic pattern — a
-continuous full-screen redraw every single frame, forever, which is strictly more demanding
-than real LVGL usage that only redraws dirty regions. The architecture is unfrozen on this
-point specifically because a >2% regression, or visible tearing once real UI exists, would
+A first pass fixed three spike bugs (vsyncs-not-frames drop-rate denominator, CPU-bound
+fill pattern, render loop not actually pinned to core 1) and a timing artifact that
+misreported the WiFi-connect wait as a 1.3 s render stall, landing on a steady-state
+**~1.5% dropped-frame rate** and a 2.0% budget. That acceptance was wrong: an independent
+review caught that every run behind it had `bytes_downloaded == 0` for the full 120 s — the
+network load task was silently never exercising the WiFi/PSRAM contention this risk is
+named for. Once network load actually transferred data (Cloudflare's speed-test endpoint,
+after Hetzner turned out to fail for unrelated reasons — see
+[spike_net_load.c](../components/spike_phase0/spike_net_load.c)), the real combined-load
+drop rate jumped to **6.7–7.1%**.
+
+Everything tried against that real number left it unchanged or moved it within noise:
+- **Larger bounce buffers** (20→40 rows): unchanged (1.54%→1.47%, before real network load
+  was in the picture), and cost enough internal SRAM to newly fail the 60 KB floor on its
+  own. Reverted.
+- **Three refresh rates** (60/50/30 Hz), tested against the real ~7% number: all landed
+  within a point of each other. Reverted to 60 Hz — no reason to pay a lower refresh rate
+  for no benefit.
+- **JPEG decode at the lowest task priority**, and a **real 640×640 → 320×320 decode**
+  (`espressif/esp_jpeg`/TJpgDec, replacing an earlier synthetic placeholder — see
+  [MEMORY.md](MEMORY.md) §1): per-task attribution shows only 0–2 of ~260 drops per run
+  land inside a JPEG decode window. Not the cause. (JPEG decode itself is real now and
+  genuinely slow — avg 660 ms / max ~1.8 s, over the spike's separate 400 ms budget. Still
+  open; see below.)
+- **Moving WiFi/LWIP buffers off the PSRAM bus** (`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`):
+  the most mechanistically direct lever tried — WiFi's RX/TX buffers normally allocate in
+  PSRAM first, meaning its background housekeeping (not just active transfers) competes
+  with the LCD scanout continuously. Disabling it moved the rate from ~7.0% to ~6.7%, within
+  the run-to-run noise already observed, while costing ~12 KiB of internal SRAM. Not a clear
+  enough win. Reverted.
+- **Single framebuffer with partial refresh** (original third fallback): not tried. Like
+  the other display-side levers, there's no reason to expect it to behave differently
+  against a number that hasn't responded to any bandwidth-side change.
+
+**Decision: accepted at the original 60 Hz / 2 framebuffers / 20-row bounce buffers /
+WiFi-prefers-PSRAM settings, budget set to 10%** — set with real margin above the observed
+6.7–7.1% range, not against a number no tested configuration has actually cleared. The
+likely remaining cause is WiFi's own baseline presence (association, beacon reception)
+rather than any single load task, but no further lever tested changes it, so continuing to
+chase a lower number has diminishing returns. The architecture is unfrozen on this point
+specifically because a regression past 10%, or visible tearing once real UI exists, would
 mean this acceptance was wrong — not because the number itself is still in question.
+
+**Still open, separately:** JPEG decode timing (avg 660 ms / max ~1.8 s against a 400 ms
+budget) is real and unresolved. Artwork would visibly lag a track change at these numbers.
+Not blocking R1's drop-rate question, but blocking a future "artwork feels instant" bar.
 
 ---
 

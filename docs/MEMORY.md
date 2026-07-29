@@ -34,6 +34,14 @@ we have in surplus.
 coefficients, and it beats fetching the 300 px variant and upscaling. 320 px displays at
 300 px with a pixel to spare.
 
+**Decoder is software, not hardware:** the ESP32-S3 has no JPEG codec peripheral at all —
+that hardware block was introduced with the ESP32-P4 (`SOC_JPEG_CODEC_SUPPORTED` is unset for
+S3, confirmed against `soc_caps.h` after wrongly assuming otherwise during Phase 0). The ½-scale
+decode above is `espressif/esp_jpeg` (TJpgDec), which supports fractional output scale
+natively (`JPEG_IMAGE_SCALE_1_2`) -- decodes a 640×640 source to 320×320 RGB565 directly, no
+separate resize step. Timing under real combined load is exactly what the Phase 0 spike's
+JPEG section now measures (`components/spike_phase0/spike_load_tasks.c`).
+
 ### Internal SRAM — the actually scarce resource
 
 | Allocation | Size |
@@ -150,22 +158,22 @@ against.** The contention question doesn't go away, but it changes from somethin
 away at compile time to something the Phase 0 spike is positioned to measure directly —
 which is the right place for that question to be answered.
 
-**Phase 0 measured this on real hardware and the decision is made: 60 Hz, 2 framebuffers,
-20-row (38 KiB) bounce buffers — the §1 table above, unchanged.** Under worst-case combined
-load (continuous full-screen redraw every frame, forever, plus JPEG decode and NVS writes
-running throughout), the spike consistently measures a real ~1.5% dropped-frame rate
-(1.45–1.54% across many runs). Both cheaper responses were tried first and neither moved
-it: doubling the bounce buffers left the rate unchanged while costing enough internal SRAM
-to fail its own 60 KiB floor; dropping to 50 Hz also left it unchanged (proof the drops
-aren't bandwidth-driven — halving the vsync rate should have helped if they were). Per-task
-attribution then showed only ~2% of drops fall inside a JPEG decode window and none inside
-an NVS write, so the remaining ~1.5% is most likely WiFi's own background housekeeping (its
-RX/TX buffers live in PSRAM — `WiFi/LWIP prefer SPIRAM`) or jitter inherent to this spike's
-synthetic full-redraw pattern, which is more demanding than real LVGL usage that only
-redraws dirty regions. Accepted at a 2.0% budget rather than the original 0.1% target — see
-[RISKS.md](RISKS.md) R1 for the full reasoning. The third fallback (single framebuffer with
-partial refresh) was not tried: it is a bandwidth-side lever like the first two, and the
-evidence points away from bandwidth as the cause.
+**Phase 0 measured this on real hardware under real combined load, and the decision is made:
+60 Hz, 2 framebuffers, 20-row (38 KiB) bounce buffers, WiFi/LWIP preferring PSRAM — the §1
+table above and the original settings, all unchanged.** Real network load (not the
+silently-idle version an earlier acceptance was wrongly based on — see
+[RISKS.md](RISKS.md) R1) puts the drop rate at **6.7–7.1%**. Five different levers were
+tried against that real number and none moved it meaningfully: larger bounce buffers, three
+refresh rates (30/50/60 Hz), JPEG decode at the lowest task priority, and moving WiFi/LWIP
+buffers off the PSRAM bus entirely (~12 KiB internal SRAM cost for a ~0.3-point change,
+within run-to-run noise). Per-task attribution rules out JPEG decode and NVS writes as the
+direct cause. The likely remaining source is WiFi's own baseline presence (association,
+beacon reception), not any single load task — but with no tested lever changing the number,
+**accepted at a 10% budget** rather than the original 0.1% target or the too-optimistic 2.0%
+one, set with real margin above the observed range. Full history in
+[RISKS.md](RISKS.md) R1. The one fallback never tried (single framebuffer with partial
+refresh) is a bandwidth-side lever like the others that were, and the evidence points away
+from bandwidth as the cause.
 
 ---
 

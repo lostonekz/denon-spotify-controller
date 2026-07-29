@@ -4,6 +4,10 @@
  * Runs every load source SIMULTANEOUSLY, because that is the only
  * configuration in which R1 manifests. Measuring them one at a time produces
  * four reassuring numbers and zero information.
+ *
+ * The load-generating tasks themselves (JPEG, NVS, network, heap watermark)
+ * live in spike_load_tasks.c -- split out purely to stay under
+ * tools/check_limits.py's 400-line limit.
  */
 
 #include "spike_phase0.h"
@@ -12,6 +16,7 @@
 #include <string.h>
 
 #include "spike_display_load.h"
+#include "spike_load_tasks.h"
 #include "spike_net_load.h"
 
 #include "esp_err.h"
@@ -20,219 +25,10 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "nvs.h"
-#include "nvs_flash.h"
 
 static const char *TAG = "spike0.run";
 
-typedef struct {
-    volatile bool     running;
-    volatile uint32_t jpeg_decodes;
-    volatile uint32_t jpeg_ms_total;
-    volatile uint32_t jpeg_ms_max;
-    volatile uint32_t nvs_writes;
-    volatile uint32_t nvs_ms_total;
-    volatile uint32_t nvs_ms_max;
-    volatile uint32_t drops_at_nvs_start;
-    volatile uint32_t drops_during_nvs;
-    volatile uint32_t drops_during_jpeg;
-    volatile uint32_t internal_min;
-    volatile uint32_t psram_min;
-    volatile uint32_t tls_heap_peak;
-    volatile uint32_t tls_handshake_ms;
-    volatile uint32_t bytes_downloaded;
-    volatile float    download_kbps;
-    spike_display_t  *disp;
-    const spike_config_t *cfg;
-} spike_ctx_t;
-
 static spike_ctx_t g_ctx;
-
-/* ---------------------------------------------------------------- */
-
-static esp_err_t init_nvs_for_spike(void)
-{
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
-    }
-    return err;
-}
-
-/*
- * JPEG load. A real 640x640 decode at 1/2 scale is what svc_artwork will do
- * on every track change (docs/MEMORY.md §1).
- *
- * PLACEHOLDER: this synthesises equivalent memory traffic rather than decoding
- * a real JPEG, because embedding a test image is a Phase 0 setup step the
- * operator does with their own artwork. Swap in esp_jpeg with a real 640x640
- * asset before trusting the timing number -- a synthetic pass here does NOT
- * validate decode timing, only bus contention.
- */
-static void jpeg_load_task(void *arg)
-{
-    spike_ctx_t *c = (spike_ctx_t *)arg;
-
-    const size_t out_px = 320 * 320;
-    uint16_t *dst = heap_caps_malloc(out_px * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-    uint8_t  *src = heap_caps_malloc(96 * 1024, MALLOC_CAP_SPIRAM);
-
-    if (dst == NULL || src == NULL) {
-        ESP_LOGE(TAG, "jpeg load: allocation failed (dst=%p src=%p)",
-                 (void *)dst, (void *)src);
-        free(dst);
-        free(src);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    memset(src, 0xA5, 96 * 1024);
-
-    while (c->running) {
-        /* Same before/after drop-attribution technique as nvs_load_task
-         * below: sample the drop counter immediately before and after the
-         * bus-heavy work, so any drop landing inside this window is
-         * attributable to THIS task rather than lumped into the overall
-         * rate. Two fallbacks (larger bounce buffers, 50 Hz refresh) left
-         * the drop rate essentially unchanged at ~1.5% regardless of
-         * refresh rate, which pointed at discrete contention events rather
-         * than continuous bandwidth pressure -- this confirms or refutes
-         * JPEG decode specifically as that event, the same way
-         * frames_dropped_during_nvs already does for NVS writes. */
-        uint32_t f0, v0, d0, l0;
-        float m0;
-        spike_display_stats(c->disp, &f0, &v0, &d0, &l0, &m0);
-
-        int64_t t0 = esp_timer_get_time();
-
-        /* Traffic shape stands in for a 1/2-scale decode: read compressed
-         * source, write RGB565 output, PSRAM on both sides. */
-        for (size_t i = 0; i < out_px; i++) {
-            uint8_t a = src[(i * 7u) % (96u * 1024u)];
-            uint8_t b = src[(i * 13u) % (96u * 1024u)];
-            dst[i] = (uint16_t)((a << 8) | b);
-        }
-
-        uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-        c->jpeg_decodes++;
-        c->jpeg_ms_total += ms;
-        if (ms > c->jpeg_ms_max) {
-            c->jpeg_ms_max = ms;
-        }
-
-        uint32_t f1, v1, d1, l1;
-        float m1;
-        spike_display_stats(c->disp, &f1, &v1, &d1, &l1, &m1);
-        (void)f0; (void)f1; (void)v0; (void)v1; (void)l0; (void)l1; (void)m0; (void)m1;
-        c->drops_during_jpeg += (d1 - d0);
-
-        vTaskDelay(pdMS_TO_TICKS(1500));   /* roughly a track change */
-    }
-
-    free(dst);
-    free(src);
-    vTaskDelete(NULL);
-}
-
-/*
- * NVS load. A flash write stalls the SPI bus, and on some parts stalls cache
- * fills too -- which is exactly the kind of thing that drops a frame. We count
- * frames dropped specifically during writes to attribute it.
- */
-static void nvs_load_task(void *arg)
-{
-    spike_ctx_t *c = (spike_ctx_t *)arg;
-    nvs_handle_t h;
-
-    if (nvs_open("spike", NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_open failed");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    uint32_t counter = 0;
-    while (c->running) {
-        uint32_t f0, v0, d0, l0;
-        float m0;
-        spike_display_stats(c->disp, &f0, &v0, &d0, &l0, &m0);
-
-        int64_t t0 = esp_timer_get_time();
-        nvs_set_u32(h, "counter", counter++);
-        nvs_commit(h);
-        uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-
-        uint32_t f1, v1, d1, l1;
-        float m1;
-        spike_display_stats(c->disp, &f1, &v1, &d1, &l1, &m1);
-        (void)v0; (void)v1;
-
-        c->nvs_writes++;
-        c->nvs_ms_total += ms;
-        if (ms > c->nvs_ms_max) {
-            c->nvs_ms_max = ms;
-        }
-        c->drops_during_nvs += (d1 - d0);
-
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-
-    nvs_close(h);
-    vTaskDelete(NULL);
-}
-
-static void net_load_task(void *arg)
-{
-    spike_ctx_t *c = (spike_ctx_t *)arg;
-    spike_net_result_t r;
-
-    /* One bounded download for the run, not a reconnect loop: hitting the
-     * same public host with a fresh TLS handshake every ~2 s for two
-     * minutes reads as abuse to their infrastructure, not a real client --
-     * every connection but the last got dropped mid-response or 429'd
-     * during Phase 0 bring-up. One real connection streaming a bounded
-     * range (see SPIKE_NET_RANGE_BYTES) is both what the product actually
-     * does (one OTA/artwork fetch, not a poll loop) and keeps the WiFi/PSRAM
-     * bus genuinely busy without tripping rate limiting. */
-    spike_net_download(c->cfg->download_url, &r);
-    if (r.ok) {
-        c->tls_heap_peak    = r.tls_heap_peak;
-        c->tls_handshake_ms = r.handshake_ms;
-        c->bytes_downloaded = r.bytes;
-        c->download_kbps    = r.kbps;
-    }
-
-    while (c->running) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-    vTaskDelete(NULL);
-}
-
-/* Samples both heaps continuously; the minimum under combined load is the
- * number docs/MEMORY.md §1 needs. */
-static void watermark_task(void *arg)
-{
-    spike_ctx_t *c = (spike_ctx_t *)arg;
-
-    c->internal_min = 0xFFFFFFFFu;
-    c->psram_min    = 0xFFFFFFFFu;
-
-    while (c->running) {
-        uint32_t i = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        uint32_t p = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        if (i < c->internal_min) {
-            c->internal_min = i;
-        }
-        if (p < c->psram_min) {
-            c->psram_min = p;
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-    vTaskDelete(NULL);
-}
 
 typedef struct {
     spike_display_t *disp;
@@ -304,13 +100,27 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
         nvs_ok = (init_nvs_for_spike() == ESP_OK);
     }
 
+    bool wifi_ok = false;
     if (cfg->enable_wifi_load) {
         if (!nvs_ok) {
             ESP_LOGW(TAG, "no NVS: skipping WiFi load");
         } else if (spike_net_connect(cfg->wifi_ssid, cfg->wifi_password) != ESP_OK) {
             ESP_LOGW(TAG, "no WiFi: R1 numbers will be OPTIMISTIC, since "
                           "WiFi DMA is a primary contender for the PSRAM bus");
+        } else {
+            wifi_ok = true;
         }
+    }
+
+    if (wifi_ok && cfg->enable_tls_load) {
+        /* Diagnostic requested after repeated unexplained download failures
+         * against the usual spike target: ping + a small download from a
+         * DIFFERENT host, to tell apart "this board's WiFi/TLS path is
+         * broken" from "something specific to the usual target host or its
+         * Range request." Runs once, blocking, before the timed load
+         * starts -- adds ~15-20 s to the run, logged separately from the
+         * verdict. */
+        spike_net_diag();
     }
 
     g_ctx.running = true;
@@ -323,15 +133,24 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
     xTaskCreatePinnedToCore(watermark_task, "wm", 3072, &g_ctx, 2, NULL, 0);
 
     if (cfg->enable_jpeg_load) {
-        xTaskCreatePinnedToCore(jpeg_load_task, "jpeg", 4096, &g_ctx, 3, NULL, 0);
+        /* Priority 1, not 3: docs/RISKS.md R1's own mitigation line says
+         * "artwork decode at low priority on core 0" -- the spike had never
+         * actually matched that, running JPEG above both watermark and NVS.
+         * Lower priority doesn't reduce PSRAM bus contention (that's a
+         * hardware arbitration question, not a FreeRTOS scheduling one),
+         * but it does stop JPEG's decode loop from monopolizing core 0 CPU
+         * time over WiFi's own housekeeping and the other load tasks. */
+        xTaskCreatePinnedToCore(jpeg_load_task, "jpeg", 4096, &g_ctx, 1, NULL, 0);
     }
     if (cfg->enable_nvs_load && nvs_ok) {
         xTaskCreatePinnedToCore(nvs_load_task, "nvs", 4096, &g_ctx, 2, NULL, 0);
     } else if (cfg->enable_nvs_load) {
         ESP_LOGW(TAG, "NVS load disabled because NVS did not initialise");
     }
-    if (cfg->enable_tls_load) {
+    if (cfg->enable_tls_load && wifi_ok) {
         xTaskCreatePinnedToCore(net_load_task, "net", 8192, &g_ctx, 5, NULL, 0);
+    } else if (cfg->enable_tls_load) {
+        ESP_LOGW(TAG, "network load disabled because WiFi did not connect");
     }
 
     render_ctx_t render_ctx = {
@@ -381,4 +200,13 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
     out->tls_handshake_ms = g_ctx.tls_handshake_ms;
     out->bytes_downloaded = g_ctx.bytes_downloaded;
     out->download_kbps    = g_ctx.download_kbps;
+    out->net_downloads_attempted   = g_ctx.net_downloads_attempted;
+    out->net_downloads_ok          = g_ctx.net_downloads_ok;
+    out->net_active_ms             = g_ctx.net_active_ms;
+    out->frames_dropped_during_net = g_ctx.drops_during_net;
+
+    out->wifi_load_enabled = cfg->enable_tls_load;
+    out->wifi_connected    = wifi_ok;
+    out->jpeg_load_enabled = cfg->enable_jpeg_load;
+    out->nvs_load_enabled  = cfg->enable_nvs_load;
 }

@@ -98,20 +98,17 @@
 #define BSP_LCD_VSYNC_BACK      10
 #define BSP_LCD_VSYNC_FRONT     20
 
-/* docs/RISKS.md R1 Phase 0 decision: 60 Hz @ 16 MHz pclk, 2 framebuffers,
- * 20-row bounce buffers. Both fallbacks in the original order were tried
- * against the real ~1.5% dropped-frame rate this spike measures under
- * worst-case continuous full-screen redraw: doubling the bounce buffers
- * left it unchanged and cost SRAM headroom; dropping to 50 Hz also left it
- * unchanged (1.49% at 60 Hz vs 1.45-1.49% at 50 Hz) -- proof the drops
- * aren't bandwidth-driven. Per-task attribution then showed only 2 of 88
- * drops fell inside a JPEG decode window and 0 inside an NVS write, so
- * they're not attributable to either load task specifically either (most
- * likely WiFi's own background housekeeping, or jitter inherent to this
- * spike's synthetic full-redraw-every-frame pattern, which is more
- * pessimistic than real LVGL usage that only redraws dirty regions).
- * Accepted at the original 60 Hz / 16 MHz baseline rather than keep paying
- * costs (SRAM, JPEG headroom) for fallbacks that don't move the number. */
+/* docs/RISKS.md R1 -- settled at the original 60 Hz / 16 MHz baseline.
+ * Under REAL combined load (network task actually transferring bytes, not
+ * the silently-idle version an earlier acceptance was wrongly based on),
+ * the drop rate lands at ~7% regardless of refresh rate: 30 Hz, 50 Hz, and
+ * 60 Hz all measured within a point of each other. Larger bounce buffers
+ * and moving WiFi/LWIP off PSRAM (see CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP
+ * in sdkconfig.defaults.esp32s3) were also tried and also didn't move it
+ * meaningfully. No display-side or WiFi-memory-placement lever tested so
+ * far changes this number, so there is no reason to pay a lower refresh
+ * rate for it -- back to 60 Hz. See docs/RISKS.md R1 for the accepted
+ * 10% budget this real number is measured against. */
 #define BSP_LCD_PIXEL_CLOCK_HZ  (16 * 1000 * 1000)
 
 /* ---- Backlight ---- */
