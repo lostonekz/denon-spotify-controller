@@ -1,0 +1,235 @@
+# Roadmap
+
+Sequenced to retire risk early and to get a *usable* device in hand quickly, because a
+device you live with reveals design problems that no amount of review does.
+
+---
+
+## Phase 0 — Bring-up and risk spike
+
+**Goal: answer R1 before the architecture is frozen.** Throwaway code, no structure.
+
+- Blink, UART, WiFi association. Confirm N16R8 and that octal PSRAM is running at ≥ 80 MHz.
+- `bsp_board`: I²C, IO expander, reset lines, power-up ordering.
+- ST7701 init over `esp_lcd_rgb_panel`; a moving gradient at 60 fps.
+- GT911 touch reporting coordinates.
+- **The bandwidth spike (R1):** 60 fps gradient *while* pulling a 5 MB HTTPS download,
+  decoding a 640×640 JPEG in a loop, and writing NVS. Instrument dropped frames and tearing.
+- Backlight PWM ramp; read the internal temperature sensor.
+
+**Exit criteria:** measured frame rate under combined load, and a written decision on
+framebuffer count, refresh rate, and bounce-buffer size. If it tears, the memory plan
+changes *now*, not in Phase 5.
+
+---
+
+## Phase 1 — Skeleton and foundations
+
+No features. This is the substrate everything else sits on, and retrofitting it is
+expensive.
+
+- `core_eventbus` (per-topic policies + injected release hooks), `core_state`, `core_fsm`,
+  `core_pool`, `core_types`
+- `svc_supervisor`: boot dependency graph, readiness model, restart policy
+  ([LIFECYCLE.md](LIFECYCLE.md)) — built early because retrofitting lifecycle ownership after
+  five services already improvise their own is the expensive order
+- `svc_storage`, `svc_settings` (schema + migration + debounced writes), `svc_logging`,
+  `svc_diagnostics` (including coredump retention and export)
+- `app_start` / `app_wiring` composition root; all tasks created, all pools allocated
+- Host test harness (Unity) running in CI, with the first tests on the FSM engine and store
+- `tools/check_includes.py`, `check_limits.py` wired into CI
+
+**Exit criteria:** device boots, all tasks running, diagnostics reports heap and stack
+watermarks over UART, CI green, layering violations fail the build.
+
+---
+
+## Phase 2 — Connectivity and the update path
+
+- `net_wifi` connection FSM with backoff + jitter
+- SoftAP provisioning portal (**stage 1 only** — Spotify OAuth is Phase 4, see
+  [NETWORKING.md §1.2](NETWORKING.md))
+- `net_time` (SNTP), `net_http` with the TLS arbiter and injected policies
+- `svc_ota`: manifest fetch, **manifest signature verification**, `security_version`
+  anti-rollback, SHA-256, image signature, health gate, rollback
+- Signing tooling: dev key, manifest generator, `tools/sign_release.py`
+- **Measured internal-SRAM table** under WiFi + TLS load, feeding [MEMORY.md](MEMORY.md) §1
+
+**Exit criteria — three independent proofs, all unattended:**
+
+1. A deliberately-broken image is flashed via OTA and the device **rolls itself back**.
+2. An image signed with the **wrong key is rejected** before the slot is marked bootable.
+3. An image with a **lower `security_version` is refused**.
+
+The recovery path is the feature, not the update path. All three are tested before anything
+depends on OTA, and the signature path is exercised on every developer build thereafter —
+which is the entire point of [adr/0006](adr/0006-staged-security.md).
+
+---
+
+## Phase 3 — Denon service (before Spotify, deliberately)
+
+Denon is local, needs no OAuth, and gives instant push feedback. It exercises the entire
+intent → service → state → event → UI path with a fraction of Spotify's setup cost, so the
+core architecture gets validated against a real integration early and cheaply.
+
+- `denon_codec.c` with an exhaustive host test table (including the `MV` half-step cases)
+- `denon_telnet.c`, `denon_http.c`, transport selection and fallback
+- Command queue with coalescing and rate limiting
+- Discovery, capability probe, volume safety clamp
+- A crude debug UI — text on screen, no theme
+
+**Exit criteria:** volume, power, mute, input, and listening mode all work with sub-100 ms
+feedback over telnet, degrade cleanly to HTTP when the link is stolen, and the safety clamp
+holds under a fuzzed intent stream.
+
+---
+
+## Phase 4 — Spotify service and artwork
+
+- `spotify_auth.c`: PKCE, QR handoff, rotated-token persistence
+- `spotify_api.c`, `spotify_parse.c` (fixture-driven host tests), `spotify_poll_policy.c`
+- `svc_artwork`: fetch, ½-scale decode, slot pool with generation handles, palette
+  extraction
+- Progress interpolation against the monotonic clock
+
+**Exit criteria:** playback state is accurate, transport controls work, artwork appears
+within ~1.5 s of a track change, and the device survives a 48 h run across multiple token
+refreshes without losing auth.
+
+---
+
+## Phase 5 — UI system
+
+The theme and widget layer, built once, properly.
+
+- `theme/` tokens, generated fonts and icons, `tools/gen_assets.py`
+- `ui_app`, `ui_router`, the pager, screen lifecycle
+- `view_model` + host tests
+- Widget catalogue
+- Now Playing screen, fully realised
+- The SDL host harness, so UI iteration is seconds not minutes
+
+**Exit criteria:** Now Playing is genuinely finished — crossfades, dynamic accent,
+interpolated progress, marquee, stale-state treatment.
+
+---
+
+## Phase 6 — Remaining screens and polish
+
+- Denon screen, Settings, modals and pickers, provisioning and re-pair screens
+- Motion pass: every transition reviewed against the motion tokens
+- `svc_power`: dim/sleep/wake FSM, wake-on-touch consumption, wake-on-playback, night mode
+- `svc_input` gesture recognition and touch-target audit
+
+**Exit criteria:** no unstyled screens, no instant backlight steps, no dead-end states.
+
+---
+
+## Phase 7 — Hardening and soak
+
+- **7-day soak**: heap slope per capability, LVGL pool fragmentation, stack watermarks, NVS
+  write count, temperature, reconnect counts
+- **Fault injection matrix**, each run unattended and each expected to self-recover:
+
+| Injected fault | Expected behaviour |
+|---|---|
+| WiFi AP powered off mid-playback | `DEGRADED`, stale content retained, auto-reconnect |
+| AVR rebooted | link re-established, state re-synced, no stuck UI |
+| Telnet socket stolen by another client | falls back to HTTP, promotes back within 60 s |
+| Spotify token revoked | `REAUTH_REQUIRED` + on-screen QR, no crash, no rollback |
+| Spotify returns 429 sustained | backoff honoured, UI stays responsive |
+| SPIFFS corrupted | erased and rebuilt, artwork re-fetched |
+| Power cut mid-NVS-write | settings intact or defaulted, never garbage |
+| Power cut mid-OTA | current slot still boots |
+| Brownout during panel init | clean reboot, no half-initialised display |
+| Wrong-key / lower-`security_version` image offered | rejected, current slot untouched |
+
+- Coredump retention and manual export path verified end to end
+- Enclosure, mounting, thermal check in the real wall location
+
+**Exit criteria:** 7 days unattended with a flat heap slope, ≥ 25 % stack headroom on every
+task, and clean recovery from every fault in the matrix.
+
+---
+
+## Phase 7b — Production profile dry run (one sacrificial unit)
+
+Scheduled, and **before** any product decision. The point of building security in stages is
+lost if the production profile is first exercised on the day it must work.
+
+- Build the production profile with a throwaway release key.
+- Verify the production build gate rejects: dev anchor present, assertions on, console on.
+- Flash one **sacrificial** unit, enable encrypted NVS, burn Secure Boot v2 and flash
+  encryption. Expect to lose this board; that is what it is for.
+- Confirm signed OTA still works on a secure-booted unit, that rotation works, and that
+  anti-rollback holds against the eFuse counter.
+- Time and document the manufacturing sequence.
+
+**Exit criteria:** a written procedure and a known cost, rather than an assumption. If the
+production profile turns out not to work, this is the cheapest possible moment to find out —
+one board, no customers.
+
+---
+
+## Phase 8 — Production readiness (only if it becomes a product)
+
+Not scheduled. Listed so the trigger conditions are written down rather than rediscovered.
+
+- Swap the dev trust anchor for an offline release key; verify rotation works on real units
+- Enable encrypted NVS (`nvs_keys` already reserved)
+- Decide Secure Boot v2 and flash encryption against a manufacturing threat model
+- Factory test fixture and pass/fail criteria ([SECURITY.md](SECURITY.md) §7)
+- eFuse burn station — **last step, after factory test passes**, since it is the step that
+  makes a failed unit unrecoverable
+- RMA flow: redacted diagnostics export, zeroising factory reset
+- Staged-rollout OTA hosting, if fleet size justifies it
+
+Everything here is a config change or a procedure. None of it is a redesign — which is the
+entire return on doing [adr/0006](adr/0006-staged-security.md) now rather than later.
+
+---
+
+## Future expansion
+
+Roughly in order of value per unit of effort. The architecture is built so none of these
+require restructuring.
+
+**Near — mostly new screens over existing services**
+- Zone 2 / Zone 3 control (the X3800H has them; `denon_state_t` is already per-zone shaped)
+- Spotify queue view, and playlist/album browse with an on-screen keyboard for search
+- Recently-played and favourites as one-tap shortcuts
+- Per-input display profiles (different accent/layout for TV vs music)
+
+**Medium — a new service, unchanged everywhere else**
+- HEOS protocol on port 1255 for native transport and multi-room grouping
+- MQTT / Home Assistant bridge: publish state, accept intents. The intent bus already exists,
+  so this is a transport adapter, not a feature.
+- Non-Spotify sources via AirPlay or the AVR's own now-playing metadata, so the screen stays
+  useful when Spotify isn't the source
+- Lyrics (time-synced) on the Now Playing screen
+
+**Longer — new hardware or new capability**
+- mmWave presence sensing for wake-on-approach. Meaningfully better than wake-on-touch —
+  the screen is already lit when you arrive. The `svc_power` wake-source abstraction is
+  designed with this in mind.
+- Knock-to-wake using the onboard QMI8658 IMU (cheap; no new hardware)
+- Multiple panels in different rooms sharing config, with one acting as provisioner
+- Ambient / photo screensaver mode with a clock
+- Matter or HomeKit exposure as a media controller
+- A physical rotary encoder for volume — the one interaction a touchscreen genuinely does
+  worse than hardware
+
+---
+
+## Sequencing notes
+
+- **Denon before Spotify** (Phase 3 before 4) is deliberate. It validates the architecture
+  against a real integration without spending a week on OAuth first.
+- **A debug UI in Phase 3, the real UI in Phase 5.** Building the polished UI against
+  services that don't exist yet means designing against imagined data. Building it after
+  means the view model is shaped by what the services actually produce.
+- **OTA rollback is proven in Phase 2**, before anything depends on it. The recovery path
+  must be trustworthy before the device goes on a wall.
+- **The host test harness and SDL UI harness are built early.** Both feel like detours in
+  week two and both pay for themselves before week six.

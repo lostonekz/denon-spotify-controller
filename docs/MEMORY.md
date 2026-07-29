@@ -1,0 +1,173 @@
+# Memory Strategy
+
+Deliverable §7. Split out of [ARCHITECTURE.md](ARCHITECTURE.md) because it is the section
+most likely to change as Phase 0 measurements come in.
+
+Target: ESP32-S3 N16R8 — 8 MB octal PSRAM, ~512 KB internal SRAM, 16 MB flash.
+
+---
+
+## 1. Budget
+
+### PSRAM
+
+| Allocation | Size | Notes |
+|---|---|---|
+| LCD framebuffers, 2 × 480×480×2 | 900 KiB | owned by `esp_lcd_rgb_panel` |
+| LVGL heap (dedicated pool) | 512 KiB | `LV_STDLIB_CUSTOM` onto our own pool |
+| Artwork slots, 3 × 320×320×2 | 600 KiB | current / incoming / outgoing (crossfade) |
+| Artwork thumbs, 3 × 60×60×2 | 21 KiB | blurred backdrop + palette source |
+| JPEG staging buffer | 96 KiB | one decode at a time |
+| Log ring, diagnostics | 16 KiB | |
+| **Total** | **~2.1 MiB** | **~5.9 MiB headroom** |
+
+That headroom is deliberate. It is what makes years of feature additions possible without
+re-architecting the memory plan.
+
+**Why 3 artwork slots and not 2:** a crossfade needs the outgoing and incoming images
+simultaneously, and prefetching the next track's art needs a third. Two slots forces a
+choice between smooth transitions and prefetch; the third slot costs 200 KiB of a resource
+we have in surplus.
+
+**Why 320×320:** Spotify serves 640, 300, and 64 px variants. We fetch the 640 and decode at
+**½ scale** — the JPEG decoder does this almost for free by dropping high-frequency
+coefficients, and it beats fetching the 300 px variant and upscaling. 320 px displays at
+300 px with a pixel to spare.
+
+### Internal SRAM — the actually scarce resource
+
+| Allocation | Size |
+|---|---|
+| RGB bounce buffers, 2 × 480×20×2 | 38 KiB |
+| WiFi + LWIP | ~60 KiB |
+| mbedTLS, 2 concurrent sessions | ~50 KiB (tuned, §4) |
+| Task stacks | ~50 KiB |
+| IRAM-resident ISRs and hot paths | — |
+
+Internal SRAM, not PSRAM, is what this design is actually rationed against. Every decision
+below that looks conservative is conservative about this table.
+
+---
+
+## 2. Bounded allocation domains
+
+An earlier draft of this document stated a rule of **"no dynamic allocation after
+startup."** That rule is false, and stating it was worse than useless — it invited future
+reviewers to trust an invariant the design already broke in at least four places.
+
+It is false because ESP-IDF's WiFi driver, LWIP, DNS resolution, `esp_http_client`, and
+mbedTLS all allocate and free continuously at runtime, on every connection and every
+request. We do not control that and cannot switch it off. The design also knowingly
+allocates for LVGL modals, the OTA task, and JSON parsing.
+
+The honest rule, which is enforceable:
+
+> **Every allocation belongs to a named domain with a declared bound. Nothing allocates
+> from the global heap on an unbounded or unmeasured path.**
+
+| Domain | Allocator | Bound | Enforcement |
+|---|---|---|---|
+| Application long-lived | `app_start()` only | fixed at boot | heap hook traps late allocs |
+| Application variable-lifetime | `core_pool` fixed blocks | pool size | allocation fails, counted, degrades |
+| LVGL | dedicated PSRAM pool | 512 KiB | cannot touch system heap; `lv_mem_monitor` sampled |
+| ESP-IDF network stacks | system heap | **not ours** | budgeted by measurement, not by rule |
+| OTA | system heap, task-scoped | ~50 KiB, artwork suspended first | peak is *lower* than steady state |
+
+What this buys that the absolute rule did not:
+
+- **LVGL's churn is legitimate and contained.** Creating and destroying a settings screen
+  allocates — that is normal LVGL usage. Confining it to a private pool means its
+  fragmentation is bounded and can never starve networking. That isolation was always the
+  real design goal; "no allocation" was a bad description of it.
+- **The network stacks get a measured budget instead of a rule they were always violating.**
+  Their steady-state and peak usage are characterised in Phase 0/2 and become numbers in
+  §1, not an assumption.
+- **The debug heap hook narrows to something checkable**: it traps allocations from
+  *application* code outside a known-good context, and ignores ESP-IDF internals. A rule
+  that fires constantly gets disabled; a rule that fires rarely gets read.
+
+Monitoring stays as before, and matters more now that the rule is softer:
+
+- `svc_diagnostics` samples free heap every 60 s and records a **slope**, per capability
+  (internal vs PSRAM). A 24/7 device with a 40 B/hour leak dies in three months; slope
+  monitoring finds it in three days.
+- `lv_mem_monitor()` fragmentation is sampled separately, because LVGL can fragment its
+  pool without leaking it.
+- Pool utilisation high-water marks are reported per pool (§5).
+- The 7-day soak test (ROADMAP Phase 7) is the actual acceptance gate. **Measurement, not
+  assertion, is what makes this safe** — which is the correction the absolute rule was
+  hiding.
+
+---
+
+## 3. The RGB panel constraint
+
+The ST7701 is on the **parallel RGB bus**. The panel's DMA reads the framebuffer from PSRAM
+continuously at the pixel clock — roughly **27 MB/s** at 480×480×16bpp×60 Hz. That traffic
+competes with WiFi DMA, TLS working memory, and JPEG decode for the same PSRAM bus.
+
+This is [RISKS.md](RISKS.md) R1, the highest-cost risk in the project. Consequences baked
+into the design:
+
+- **Bounce buffers in internal SRAM** (`bb_invalidate_cache`), so DMA burst reads are
+  serviced from SRAM and PSRAM is touched in larger, more efficient bursts.
+- `CONFIG_SPIRAM_FETCH_INSTRUCTIONS` and `CONFIG_SPIRAM_RODATA` stay **off** — code fetches
+  must not contend with scanout.
+- Octal PSRAM at ≥ 80 MHz, verified at bring-up rather than assumed.
+- The LCD ISR and everything it calls live in **IRAM**.
+- Artwork decode runs at priority 3 on core 0 specifically so it cannot saturate the bus
+  during an animation on core 1.
+
+**Every number in §1 is provisional until the Phase 0 spike measures real throughput under
+combined load.** If the panel tears, the likely responses in order of preference are: larger
+bounce buffers → 50 Hz refresh → single framebuffer with partial refresh. Knowing which one
+we need in week one is worth an entire phase.
+
+---
+
+## 4. TLS memory arbiter
+
+mbedTLS costs ~40 KB of internal SRAM per session at default fragment lengths. Three
+concurrent HTTPS connections — Spotify API, artwork, OTA — would exhaust internal RAM, and
+the failure surfaces as an allocation error deep inside the TLS stack rather than as
+anything diagnosable.
+
+- A counting semaphore in `net_http` caps concurrent TLS sessions at **2**.
+- `CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096` and `OUT_CONTENT_LEN=2048` cut roughly 25 KB per
+  session. Both Spotify and the OTA host negotiate max-fragment-length correctly; this is
+  verified in Phase 2 rather than assumed.
+- Session tickets are cached for `api.spotify.com`, so the frequent poll connection resumes
+  instead of performing a full handshake every 5 s — a significant CPU and latency saving on
+  the hottest network path.
+- OTA takes both slots, with artwork suspended for the duration.
+
+---
+
+## 5. Pool inventory
+
+Every pool is sized at startup from a Kconfig constant, and every one reports utilisation
+and high-water mark to `svc_diagnostics`.
+
+| Pool | Blocks × size | Owner |
+|---|---|---|
+| Event queues (per subscriber) | see [EVENTS_AND_STATE.md](EVENTS_AND_STATE.md) §5.3 | `core_eventbus` |
+| Intent queue | 16 × 64 B | `core_eventbus` |
+| Artwork slots | 3 × 200 KiB + 3 × 7 KiB | `svc_artwork` |
+| JPEG staging | 1 × 96 KiB | `svc_artwork` |
+| HTTP response buffers | 2 × 16 KiB | `net_http` |
+| **JSON parse scratch** | 2 × 8 KiB | `net_http` |
+| String scratch (formatting) | 8 × 128 B | `ui` |
+| Log ring | 8 KiB | `svc_logging` |
+| Coredump summary staging | 1 × 2 KiB | `svc_diagnostics` |
+
+**JSON parsing strategy**, since it is otherwise a hidden heap consumer. A `/v1/me/player`
+response is ~4–8 KB and only ~12 fields are needed. We do **not** build a DOM: a streaming
+pull parser reads directly from the HTTP response into `core_types` structs, so peak memory
+is one 8 KiB scratch block rather than a parsed tree several times the payload size. No
+`cJSON`, no allocation per node. This also bounds the damage from a malformed or unexpectedly
+large response — the parser has a hard input ceiling and fails cleanly past it.
+
+If a pool ever runs dry, that is a **design error, not a runtime condition**: the allocation
+fails, the failure is counted and logged, and the caller degrades visibly. We never block
+waiting for a pool block, because blocking on a shared pool is how a low-priority task
+deadlocks a high-priority one.

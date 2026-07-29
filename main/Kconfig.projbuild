@@ -1,0 +1,35 @@
+menu "Denon/Spotify Controller"
+
+menu "Phase 0 spike"
+
+config DSC_SPIKE_WIFI_SSID
+    string "WiFi SSID for the Phase 0 spike"
+    default ""
+    help
+        The spike needs a real AP so WiFi DMA contends with the LCD scanout.
+        Without it the R1 numbers are optimistic and must not be trusted.
+        Environment, not code -- set it here rather than editing main.c.
+
+config DSC_SPIKE_WIFI_PASSWORD
+    string "WiFi password for the Phase 0 spike"
+    default ""
+
+config DSC_SPIKE_URL
+    string "HTTPS URL to download repeatedly during the spike"
+    default "https://www.google.com/"
+    help
+        Should be at least a few megabytes so the TLS session and WiFi DMA
+        stay busy for the whole run. A tiny page finishes instantly and
+        measures nothing.
+
+endmenu
+
+config DSC_FACTORY_TEST
+    bool "Build factory test mode instead of the application"
+    default n
+    help
+        Manufacturing hardware exerciser (docs/SECURITY.md §7b). Must never
+        be enabled in a shipping build -- tools/check_release.py fails a
+        production profile that has this set.
+
+endmenu

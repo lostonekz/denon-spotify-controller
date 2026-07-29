@@ -1,0 +1,56 @@
+# Shared defaults. Committed. Validated by tools/check_sdkconfig.py.
+# Rationale for each block is in docs/ — this file is policy, not preference.
+
+# --- Partition table (docs/PLATFORM.md §1) ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# --- OTA rollback (docs/PLATFORM.md §2.2) ---
+# The health gate is useless without this: it is what makes a failed gate
+# revert instead of reboot-looping on a broken image.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n
+
+# --- Signed images, development trust anchor (docs/SECURITY.md §1) ---
+# Verification runs in EVERY profile. Only the key changes. A signature path
+# that runs only in production has never been tested.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_ECDSA_SCHEME=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="tools/keys/dev_ota_signing.pem"
+
+# --- eFuse: never, on development units (docs/ARCHITECTURE.md §0.1) ---
+CONFIG_SECURE_BOOT=n
+CONFIG_SECURE_FLASH_ENC_ENABLED=n
+
+# --- TLS memory (docs/MEMORY.md §4) ---
+# ~25 KB internal SRAM saved per session. Both Spotify and the OTA host
+# negotiate max-fragment-length correctly; verified in Phase 2.
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=2048
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+
+# --- Task watchdog (docs/ARCHITECTURE.md §4) ---
+# A frozen wall panel is indistinguishable from dead hardware. We want a
+# reboot with a coredump instead.
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# --- Coredump (docs/LIFECYCLE.md §2) ---
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_SHA=y
+CONFIG_ESP_COREDUMP_STACK_SIZE=1024
+
+# --- FreeRTOS ---
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
+
+# --- Logging ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y

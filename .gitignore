@@ -1,0 +1,31 @@
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Host test build output
+build/host/
+build/asan/
+
+# Signing keys — never commit real keys. The dev key referenced in
+# sdkconfig.defaults is generated locally per docs/SECURITY.md §4 and
+# tools/check_release.py enforces it never reaches a production build.
+tools/keys/*.pem
+tools/keys/*.der
+!tools/keys/.gitkeep
+
+# Local tool config, not project content
+.claude/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc

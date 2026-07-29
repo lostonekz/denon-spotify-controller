@@ -1,0 +1,64 @@
+# Denon MV codec boundary table — SHARED between the C Unity test and the
+# Python oracle (tools/denon_mv_oracle.py). One table, two independent
+# implementations. If they disagree, one of them is wrong and CI says so.
+#
+# direction: parse | format | roundtrip
+# input:     wire string (parse) or half-dB integer (format)
+# status:    OK | NOT_MV | MALFORMED | OUT_OF_RANGE | MAX_REPORT
+# expect:    half-dB integer (parse/OK, MAX_REPORT) or wire string (format/OK)
+#            '-' when status != OK/MAX_REPORT
+#
+direction,input,status,expect,note
+# --- parse: whole dB, two digits ---
+parse,MV00,OK,0,minimum
+parse,MV01,OK,2,one dB
+parse,MV05,OK,10,zero-padded single digit
+parse,MV52,OK,104,typical listening level
+parse,MV80,OK,160,Denon 0 dB reference
+parse,MV98,OK,196,documented maximum
+# --- parse: half dB, three digits. THE ambiguity this file exists for. ---
+parse,MV005,OK,1,half step at minimum
+parse,MV055,OK,11,5.5 not 55
+parse,MV525,OK,105,52.5 dB NOT 525
+parse,MV805,OK,161,80.5 dB NOT 805
+parse,MV985,OK,197,98.5 dB maximum half step
+parse,MV520,OK,104,explicit zero half step
+# --- parse: MVMAX is a report, never a level ---
+parse,MVMAX 98,MAX_REPORT,196,naive atoi would yield 0 here
+parse,MVMAX 985,MAX_REPORT,197,max with half step
+parse,MVMAX98,MAX_REPORT,196,no space variant
+# --- parse: not MV at all ---
+parse,MUON,NOT_MV,-,mute
+parse,PWON,NOT_MV,-,power
+parse,SIMPLAY,NOT_MV,-,input select
+parse,MSDIRECT,NOT_MV,-,listening mode starts with M
+# --- parse: malformed ---
+parse,MV,MALFORMED,-,no payload
+parse,MV5,MALFORMED,-,single digit is not valid wire format
+parse,MV5252,MALFORMED,-,four digits
+parse,MVX,MALFORMED,-,non digit
+parse,MV5X,MALFORMED,-,trailing non digit
+parse,MV523,MALFORMED,-,third digit must be 0 or 5
+parse,MV521,MALFORMED,-,third digit must be 0 or 5
+# --- parse: out of range ---
+parse,MV99,OUT_OF_RANGE,-,99.0 dB exceeds scale
+parse,MV995,OUT_OF_RANGE,-,99.5 dB exceeds scale
+# --- format: zero padding is mandatory ---
+format,0,OK,MV00,minimum
+format,1,OK,MV005,half step
+format,10,OK,MV05,MUST zero pad not MV5
+format,11,OK,MV055,zero pad with half step
+format,104,OK,MV52,typical
+format,105,OK,MV525,half step
+format,160,OK,MV80,reference
+format,196,OK,MV98,maximum
+format,197,OK,MV985,maximum half step
+format,198,OUT_OF_RANGE,-,above scale
+format,400,OUT_OF_RANGE,-,far above scale
+# --- roundtrip: format then parse must be identity for every legal value ---
+roundtrip,0,OK,0,
+roundtrip,1,OK,1,
+roundtrip,104,OK,104,
+roundtrip,105,OK,105,
+roundtrip,196,OK,196,
+roundtrip,197,OK,197,

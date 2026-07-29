@@ -1,0 +1,41 @@
+# ESP32-S3 N16R8 specifics. Committed. Validated by tools/check_sdkconfig.py.
+#
+# THE CRITICAL BLOCK IS PSRAM. The ST7701 is on the parallel RGB bus, so panel
+# DMA reads the framebuffer out of PSRAM continuously (~27 MB/s at 480x480x16bpp
+# x60Hz) in competition with WiFi DMA and JPEG decode. This is RISKS.md R1, the
+# highest-cost risk in the project, and these settings are the levers on it.
+# Phase 0 measures whether they are sufficient.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Octal PSRAM at 80 MHz (docs/MEMORY.md §3) ---
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# --- Do NOT put code or rodata in PSRAM ---
+# Instruction/rodata fetches would contend with the LCD scanout for the same
+# bus. This is the single most important R1 mitigation in this file.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=n
+CONFIG_SPIRAM_RODATA=n
+
+# --- Flash: 16 MB, QIO, 80 MHz ---
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# --- CPU ---
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_UNICORE=n
+
+# --- LCD ISR in IRAM (docs/MEMORY.md §3) ---
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
+# --- Cache ---
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y

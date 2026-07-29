@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "Allowed inter-component dependency edges. See docs/ARCHITECTURE.md §1.2.",
+    "JSON, not YAML, deliberately: CI gates must run with a bare Python and no",
+    "pip install. A gate with a dependency is a gate that gets skipped."
+  ],
+
+  "_phase0_note": [
+    "'spike' is a PHASE 0 ONLY layer for the throwaway R1 measurement harness.",
+    "It has broad permissions so its layering violations are DECLARED rather",
+    "than accidental. Delete the spike layer, the spike_phase0 entry, and the",
+    "app -> spike edge together when Phase 0 completes. If this note is still",
+    "here after Phase 1 starts, that is the bug."
+  ],
+
+  "layers": {
+    "app":  ["ui", "core", "svc", "net", "hal", "bsp", "idf", "spike"],
+    "ui":   ["core", "lvgl", "idf", "ui_hal_glue"],
+    "core": ["idf_freertos"],
+    "svc":  ["core", "net", "idf"],
+    "net":  ["core", "idf"],
+    "hal":  ["bsp", "idf"],
+    "bsp":  ["idf"],
+    "spike":["core", "hal", "bsp", "net", "idf", "lvgl"]
+  },
+
+  "component_layer": {
+    "main":          "app",
+    "ui":            "ui",
+    "core_types":    "core",
+    "core_pool":     "core",
+    "core_eventbus": "core",
+    "core_state":    "core",
+    "core_fsm":      "core",
+    "svc_denon":     "svc",
+    "svc_ota":       "svc",
+    "svc_settings":  "svc",
+    "svc_storage":   "svc",
+    "svc_diagnostics": "svc",
+    "svc_supervisor":  "svc",
+    "net_http":      "net",
+    "net_wifi":      "net",
+    "net_time":      "net",
+    "hal_display":   "hal",
+    "hal_touch":     "hal",
+    "hal_backlight": "hal",
+    "bsp_board":     "bsp",
+    "spike_phase0":  "spike"
+  },
+
+  "_ui_hal_glue_comment": [
+    "docs/ARCHITECTURE.md §1.2: the UI links hal_display and hal_touch ONLY for",
+    "LVGL glue - flush callback, tick, input read. It may not read backlight,",
+    "temperature, IMU or board revision directly; those arrive via core_state.",
+    "This is a symbol-level exception, not a blanket ui -> hal edge."
+  ],
+  "ui_hal_glue": {
+    "allowed_components": ["hal_display", "hal_touch"],
+    "allowed_headers": ["hal_display.h", "hal_touch.h"]
+  },
+
+  "idf_prefixes": [
+    "esp_", "freertos/", "driver/", "nvs", "lwip/", "mbedtls/", "sdkconfig.h",
+    "soc/", "hal/", "spi_flash", "sys/", "lcd", "led"
+  ],
+
+  "stdlib_headers": [
+    "stdio.h", "stdlib.h", "string.h", "stdint.h", "stdbool.h", "stddef.h",
+    "stdarg.h", "limits.h", "math.h", "time.h", "errno.h", "assert.h",
+    "inttypes.h", "ctype.h"
+  ]
+}

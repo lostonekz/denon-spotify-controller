@@ -1,0 +1,15 @@
+# Denon/Spotify Controller — 16 MB flash
+# See docs/PLATFORM.md §1. Validated by tools/check_partitions.py.
+#
+# The partition table is the one thing here that needs physical access to change,
+# so it is sized with deliberate excess rather than fitted to today's needs.
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x6000,
+nvs_keys,   data, nvs_keys, 0xF000,   0x1000,
+otadata,    data, ota,      0x10000,  0x2000,
+phy_init,   data, phy,      0x12000,  0x1000,
+ota_0,      app,  ota_0,    0x20000,  0x600000,
+ota_1,      app,  ota_1,    0x620000, 0x600000,
+storage,    data, spiffs,   0xC20000, 0x380000,
+coredump,   data, coredump, 0xFA0000, 0x40000,
