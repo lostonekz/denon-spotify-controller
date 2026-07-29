@@ -50,10 +50,21 @@
 #define BSP_LCD_SPI_SDA         GPIO_NUM_47
 
 /* ---- ST7701 panel: parallel RGB ----
- * 16-bit RGB565. This bus is the reason docs/RISKS.md R1 exists. */
+ * 16-bit RGB565. This bus is the reason docs/RISKS.md R1 exists.
+ *
+ * GPIO 19/20 are hard-wired to the ESP32-S3's native USB D-/D+ on every unit
+ * of this chip -- not configurable, not board-specific. An earlier draft put
+ * BSP_LCD_G1 on GPIO 20. The board still flashed and enumerated fine (the
+ * ROM bootloader owns USB before app_main runs), but the instant the app
+ * configured the RGB panel, GPIO 20 was reconfigured away from USB and the
+ * native USB peripheral dropped off entirely -- no error, no warning, the
+ * device just vanished from Windows and stayed gone regardless of cable or
+ * port. Recovering needed the board's BOOT-button download-mode sequence,
+ * since normal USB was gone for good until a corrected image was flashed.
+ * tools/check_pins.py now hard-fails on GPIO 19/20 for exactly this reason;
+ * it only warned before, which is why this got past review once. */
 #define BSP_LCD_H_RES           480
 #define BSP_LCD_V_RES           480
-#define BSP_LCD_PIXEL_CLOCK_HZ  (16 * 1000 * 1000)
 
 #define BSP_LCD_DE              GPIO_NUM_18
 #define BSP_LCD_VSYNC           GPIO_NUM_17
@@ -66,7 +77,7 @@
 #define BSP_LCD_B3              GPIO_NUM_7
 #define BSP_LCD_B4              GPIO_NUM_15
 #define BSP_LCD_G0              GPIO_NUM_8
-#define BSP_LCD_G1              GPIO_NUM_20
+#define BSP_LCD_G1              GPIO_NUM_42
 #define BSP_LCD_G2              GPIO_NUM_3
 #define BSP_LCD_G3              GPIO_NUM_46
 #define BSP_LCD_G4              GPIO_NUM_9
@@ -86,6 +97,22 @@
 #define BSP_LCD_VSYNC_PULSE     8
 #define BSP_LCD_VSYNC_BACK      10
 #define BSP_LCD_VSYNC_FRONT     20
+
+/* docs/RISKS.md R1 Phase 0 decision: 60 Hz @ 16 MHz pclk, 2 framebuffers,
+ * 20-row bounce buffers. Both fallbacks in the original order were tried
+ * against the real ~1.5% dropped-frame rate this spike measures under
+ * worst-case continuous full-screen redraw: doubling the bounce buffers
+ * left it unchanged and cost SRAM headroom; dropping to 50 Hz also left it
+ * unchanged (1.49% at 60 Hz vs 1.45-1.49% at 50 Hz) -- proof the drops
+ * aren't bandwidth-driven. Per-task attribution then showed only 2 of 88
+ * drops fell inside a JPEG decode window and 0 inside an NVS write, so
+ * they're not attributable to either load task specifically either (most
+ * likely WiFi's own background housekeeping, or jitter inherent to this
+ * spike's synthetic full-redraw-every-frame pattern, which is more
+ * pessimistic than real LVGL usage that only redraws dirty regions).
+ * Accepted at the original 60 Hz / 16 MHz baseline rather than keep paying
+ * costs (SRAM, JPEG headroom) for fallbacks that don't move the number. */
+#define BSP_LCD_PIXEL_CLOCK_HZ  (16 * 1000 * 1000)
 
 /* ---- Backlight ---- */
 #define BSP_BACKLIGHT_PWM_CH    0

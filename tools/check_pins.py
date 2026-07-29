@@ -45,10 +45,16 @@ RESERVED = {
 # Strapping pins: usable, but with boot-time constraints worth flagging.
 STRAPPING = {0: "boot mode", 3: "JTAG source", 45: "VDD_SPI", 46: "boot log"}
 
-# USB-Serial/JTAG. Usable as GPIO, but doing so costs the built-in USB console
-# and debugger -- on a wall-mounted device with no other console, that is a
-# recovery path worth knowing you gave up.
-USB_JTAG = {19: "USB D-", 20: "USB D+"}
+# Native USB D-/D+. Hard-wired on every ESP32-S3, not board-specific, not
+# configurable. This is a hard FAIL, not a warning: the ROM bootloader owns
+# these pins before app_main runs, so a build using one for something else
+# still flashes and enumerates fine -- then the instant the app configures
+# that peripheral, USB drops off with no error and does not come back short
+# of the board's physical BOOT-button download-mode sequence. An earlier
+# draft of bsp_pins.h put an LCD data line on GPIO 20, and this was a WARN at
+# the time; it cost a full debugging detour, including the user physically
+# power-cycling the board, before the actual cause (this file) was found.
+USB_JTAG_RESERVED = {19: "native USB D-", 20: "native USB D+"}
 
 ALLOWED_SHARED = [
     # e.g. ({"BSP_A", "BSP_B"}, "reason")
@@ -95,10 +101,12 @@ def main():
         if gpio in STRAPPING:
             warnings.append("GPIO %d (%s) is a strapping pin: %s"
                             % (gpio, ", ".join(names), STRAPPING[gpio]))
-        if gpio in USB_JTAG:
-            warnings.append("GPIO %d (%s) is %s - using it forfeits the "
-                            "built-in USB console/debugger"
-                            % (gpio, ", ".join(names), USB_JTAG[gpio]))
+        if gpio in USB_JTAG_RESERVED:
+            failures.append("GPIO %d (%s) is %s - claiming it kills the "
+                            "board's USB connection the instant the app "
+                            "runs, with no recovery short of BOOT-button "
+                            "download mode"
+                            % (gpio, ", ".join(names), USB_JTAG_RESERVED[gpio]))
 
     for w in warnings:
         print("  WARN %s" % w)

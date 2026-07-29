@@ -88,6 +88,17 @@ avoided is better solved by *rotation support* (§4) than by having no key at al
   reboot ──► health gate (PLATFORM §2.2) ──► confirm or roll back
 ```
 
+Two independent signatures, two independent schemes — worth not conflating:
+
+- **Manifest signature** — our own application code (Phase 2, `net_http`/mbedTLS),
+  free to pick any scheme. ECDSA P-256 here is a real choice, not a constraint.
+- **Image signature** — ESP-IDF's own bootloader-enforced verification
+  (`esp_app_format`), and **not** a free choice: its scheme is fixed by the
+  chip. See [adr/0006](adr/0006-staged-security.md) and
+  [tools/keys/README.md](../tools/keys/README.md) — ESP32-S3 only supports
+  RSA-3072 for "signed apps, no secure boot," which is why the dev/release
+  signing key is RSA-3072, not ECDSA.
+
 Manifest gains three fields over the earlier draft:
 
 ```json

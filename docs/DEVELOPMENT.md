@@ -146,12 +146,44 @@ This is deliberately *not* persisted to `PATH` the way CMake/clang are above —
 globally in every shell is how you get ESP-IDF's Python silently shadowing
 the system one. Source it per-session instead.
 
+### ccache and parallelism (Windows) — read this before your first build
+
+The first real `idf.py build` on this project hung for **over ten hours**
+with zero CPU activity, and later attempts failed with a compiler process
+exiting non-zero and printing *no diagnostic at all* — on three different
+files, none of them reproducible in isolation. Both symptoms trace to the
+same cause: this machine has 32 logical cores, ninja defaults to running
+~34 jobs in parallel, and that many simultaneous `xtensa-esp32s3-elf-gcc`
+(and `ccache`) processes on Windows contends badly with real-time antivirus
+scanning. The failures are silent because the compiler process itself
+never gets to run — something ahead of it (process spawn, a file lock,
+ccache's own IPC) stalls or dies first.
+
+Two changes, both required:
+
+```powershell
+$env:IDF_CCACHE_ENABLE = "0"      # NOT just `idf.py -DCCACHE_ENABLE=0 build` —
+                                   # that flag gets silently re-asserted by
+                                   # idf.py's own option resolution on every
+                                   # reconfigure. The environment variable is
+                                   # the one thing that actually stuck.
+idf.py build -- -j 8              # ninja's default parallelism (~34 here) is
+                                   # what triggers the contention. 8 has built
+                                   # clean, full, from-scratch, repeatedly.
+```
+
+If a build ever produces a `FAILED: ...` line with the compiler command
+printed but **no error text following it**, that is this issue, not a real
+compile error — the same command almost always succeeds when run alone
+(`gcc <same flags> -c file.c -o /tmp/test.o` directly). Don't spend time
+debugging the "broken" file; retry with `-j 8` first.
+
 **Build and run the Phase 0 spike:**
 
 ```powershell
 idf.py set-target esp32s3
 idf.py menuconfig     # Phase 0 spike WiFi SSID/password and download URL
-idf.py build
+idf.py build -- -j 8
 ```
 
 The dev signing key (`tools/keys/dev_ota_signing.pem`) does not need
@@ -163,6 +195,17 @@ deliverable ([ROADMAP.md](ROADMAP.md)) and needs the board in hand:
 
 ```powershell
 idf.py flash monitor
+```
+
+`idf.py` usually auto-detects the port. If it doesn't (or with more than one
+serial device attached), find it explicitly — the board enumerates as a
+plain USB Serial Device via the ESP32-S3's native USB-Serial/JTAG, no driver
+install needed on Windows 10/11:
+
+```powershell
+Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match "COM\d+" } |
+    Select-Object Name, DeviceID
+# then: idf.py -p COM6 flash monitor
 ```
 
 ### Post-link LVGL boundary check

@@ -15,8 +15,18 @@ CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n
 # --- Signed images, development trust anchor (docs/SECURITY.md §1) ---
 # Verification runs in EVERY profile. Only the key changes. A signature path
 # that runs only in production has never been tested.
+#
+# RSA-3072, not ECDSA: ESP-IDF's SECURE_SIGNED_APPS_SCHEME choice only offers
+# ECDSA (plain) on Secure Boot V1, which the ESP32-S3 does not support at all,
+# and ECDSA-V2 on ESP32-C2 only. RSA-3072 is the only scheme this chip has for
+# "signed apps, no secure boot." An earlier draft assumed ECDSA everywhere and
+# generated a P-256 key; Kconfig silently ignored the unsatisfiable ECDSA
+# symbol and fell back to its RSA default, while the actual key on disk was
+# EC -- so every boot aborted in check_signature_on_update_check with "RSA
+# signing scheme selected but signature block generated for ECDSA scheme".
+# Caught on first hardware boot, which is exactly what Phase 0 is for.
 CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
-CONFIG_SECURE_SIGNED_APPS_ECDSA_SCHEME=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
 CONFIG_SECURE_BOOT_SIGNING_KEY="tools/keys/dev_ota_signing.pem"
 
 # --- eFuse: never, on development units (docs/ARCHITECTURE.md §0.1) ---
@@ -42,7 +52,7 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 # --- Coredump (docs/LIFECYCLE.md §2) ---
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
-CONFIG_ESP_COREDUMP_CHECKSUM_SHA=y
+CONFIG_ESP_COREDUMP_CHECKSUM_SHA256=y
 CONFIG_ESP_COREDUMP_STACK_SIZE=1024
 
 # --- FreeRTOS ---

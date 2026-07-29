@@ -107,6 +107,22 @@ def mut_pins(root):
     return "touch INT collides with LCD PCLK"
 
 
+def mut_pins_native_usb(root):
+    """The actual bug that cost a full hardware debugging detour: a signal
+    put on GPIO 19/20 flashes and enumerates fine (the ROM bootloader owns
+    USB before app_main runs) and then silently kills USB the instant the
+    app claims the pin -- no error, no recovery short of BOOT-button
+    download mode. Was a WARN; must be a FAIL now."""
+    p = os.path.join(root, "components", "bsp_board", "include", "bsp_pins.h")
+    with open(p, encoding="utf-8") as fh:
+        txt = fh.read()
+    txt = txt.replace("#define BSP_LCD_G1              GPIO_NUM_42",
+                      "#define BSP_LCD_G1              GPIO_NUM_20")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(txt)
+    return "LCD data line reassigned onto native USB D+ (GPIO 20)"
+
+
 def mut_partitions_overlap(root):
     p = os.path.join(root, "partitions.csv")
     with open(p, encoding="utf-8") as fh:
@@ -130,16 +146,17 @@ def mut_partitions_asymmetric(root):
 
 
 def mut_sdkconfig_r1(root):
-    """The R1 mitigation being silently switched off -- the exact regression
-    this gate exists to catch."""
+    """XIP_FROM_PSRAM being silently switched off -- reopens the exact panic
+    Phase 0 found on first hardware boot (cache disabled during esp_flash_read
+    while the LCD DMA ISR touches the PSRAM framebuffer)."""
     p = os.path.join(root, "sdkconfig.defaults.esp32s3")
     with open(p, encoding="utf-8") as fh:
         txt = fh.read()
-    txt = txt.replace("CONFIG_SPIRAM_FETCH_INSTRUCTIONS=n",
-                      "CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y")
+    txt = txt.replace("CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y",
+                      "CONFIG_SPIRAM_FETCH_INSTRUCTIONS=n")
     with open(p, "w", encoding="utf-8") as fh:
         fh.write(txt)
-    return "SPIRAM_FETCH_INSTRUCTIONS re-enabled (kills the R1 mitigation)"
+    return "SPIRAM_FETCH_INSTRUCTIONS disabled (reopens the Phase 0 cache panic)"
 
 
 def mut_sdkconfig_efuse(root):
@@ -186,6 +203,7 @@ CASES = [
     ("limits",        mut_file_length,          "check_limits.py",        None),
     ("lvgl_boundary", mut_lvgl_boundary,        "check_lvgl_boundary.py", None),
     ("pins",          mut_pins,                 "check_pins.py",          None),
+    ("pins",          mut_pins_native_usb,      "check_pins.py",          None),
     ("partitions",    mut_partitions_overlap,   "check_partitions.py",    None),
     ("partitions",    mut_partitions_asymmetric,"check_partitions.py",    None),
     ("sdkconfig",     mut_sdkconfig_r1,         "check_sdkconfig.py",     None),

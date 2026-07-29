@@ -3,12 +3,20 @@
 GATE 6 — sdkconfig policy.
 
 Several architectural claims in docs/ are really sdkconfig settings wearing a
-prose disguise. If someone flips CONFIG_SPIRAM_FETCH_INSTRUCTIONS to y, the
-R1 mitigation in docs/MEMORY.md §3 is silently gone and nothing else notices
-until the display tears under load -- weeks later, intermittently, on a wall.
+prose disguise. This gate makes those settings assertions instead of
+intentions. Every entry cites the doc it enforces.
 
-This gate makes those settings assertions instead of intentions. Every entry
-cites the doc it enforces.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS/RODATA are asserted ON, not off. An earlier
+version of this policy required them OFF, reasoning that keeping code/rodata
+off PSRAM was the primary R1 mitigation. Phase 0 found that reasoning
+incomplete on first hardware boot: without XIP_FROM_PSRAM (which requires
+both), any esp_flash_read (nvs_flash_init, an OTA check, any NVS write)
+briefly disables the flash/PSRAM cache, and if the LCD's DMA ISR fires in
+that window trying to refresh from the PSRAM framebuffer, the core panics
+with "Cache disabled but cached memory region accessed". A crash is strictly
+worse than the bus contention the old setting guarded against, and that
+contention is now something Phase 0 measures empirically rather than assumes
+away at compile time. See sdkconfig.defaults.esp32s3 and docs/MEMORY.md §3.
 """
 
 import argparse
@@ -25,10 +33,14 @@ POLICY = [
      "quad PSRAM has nowhere near the bandwidth for RGB scanout"),
     ("CONFIG_SPIRAM_SPEED_80M", "y", "MEMORY.md §3",
      "40 MHz PSRAM cannot sustain 27 MB/s scanout plus WiFi"),
-    ("CONFIG_SPIRAM_FETCH_INSTRUCTIONS", None, "MEMORY.md §3",
-     "code fetches from PSRAM contend with LCD scanout - the top R1 mitigation"),
-    ("CONFIG_SPIRAM_RODATA", None, "MEMORY.md §3",
-     "rodata in PSRAM contends with LCD scanout"),
+    ("CONFIG_SPIRAM_FETCH_INSTRUCTIONS", "y", "MEMORY.md §3",
+     "required by XIP_FROM_PSRAM - without it, esp_flash_read (NVS, OTA) "
+     "disabling the cache concurrently with LCD DMA panics the core"),
+    ("CONFIG_SPIRAM_RODATA", "y", "MEMORY.md §3",
+     "required by XIP_FROM_PSRAM, same cache-disable/LCD-DMA panic"),
+    ("CONFIG_SPIRAM_XIP_FROM_PSRAM", "y", "MEMORY.md §3",
+     "keeps the ext-mem cache available during flash ops - the actual fix "
+     "for the Phase 0 hardware panic, not a performance nicety"),
 
     # --- OTA (docs/PLATFORM.md §2) ---
     ("CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE", "y", "PLATFORM.md §2.2",

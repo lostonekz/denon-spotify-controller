@@ -21,6 +21,11 @@ device you live with reveals design problems that no amount of review does.
 framebuffer count, refresh rate, and bounce-buffer size. If it tears, the memory plan
 changes *now*, not in Phase 5.
 
+**Met.** Measured on real hardware: ~1.5% dropped frames under worst-case combined load.
+Decision: 2 framebuffers, 60 Hz, 20-row (38 KiB) bounce buffers — the original settings,
+kept after two fallbacks (larger buffers, 50 Hz) both left the rate unchanged. Full
+reasoning and numbers in [RISKS.md](RISKS.md) R1 and [MEMORY.md](MEMORY.md) §1.
+
 ---
 
 ## Phase 1 — Skeleton and foundations

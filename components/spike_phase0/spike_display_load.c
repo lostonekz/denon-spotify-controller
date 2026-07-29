@@ -11,6 +11,7 @@
 
 #include "spike_display_load.h"
 
+#include <inttypes.h>   /* PRIu32 -- see spike_report.c for why this matters */
 #include <string.h>
 
 #include "bsp_pins.h"
@@ -22,12 +23,24 @@
 
 static const char *TAG = "spike0.disp";
 
+/* Rows per bounce buffer -- see the "THE R1 LEVER" comment in
+ * spike_display_init(). Tried doubled to 40: left the ~1.5% drop rate
+ * essentially unchanged (1.54% -> 1.47%) while costing enough internal SRAM
+ * headroom to fail the 60 KB floor on its own. Reverted -- bounce buffer
+ * size isn't the lever for this contention, so there's no reason to keep
+ * paying the SRAM cost for it. See BSP_LCD_REFRESH_HZ in bsp_pins.h for the
+ * next fallback (50 Hz refresh) being tried instead. */
+#define SPIKE_BOUNCE_ROWS 20
+
 struct spike_display_s {
     esp_lcd_panel_handle_t panel;
     uint16_t              *fb[2];
     int                    active;
 
     volatile uint32_t frames;
+    volatile uint32_t vsyncs;      /* total VSYNC ticks -- the correct
+                                    * denominator for a drop rate, distinct
+                                    * from frames (CPU render-loop count) */
     volatile uint32_t drops;
     volatile bool     buffer_ready;
 
@@ -57,6 +70,7 @@ static bool IRAM_ATTR on_vsync(esp_lcd_panel_handle_t panel,
     (void)event;
     spike_display_t *d = (spike_display_t *)user_ctx;
 
+    d->vsyncs++;
     if (!d->buffer_ready) {
         d->drops++;
     }
@@ -101,10 +115,10 @@ esp_err_t spike_display_init(spike_display_t **out)
          * them instead of directly from PSRAM, so PSRAM is touched in larger,
          * more efficient bursts and contends less with WiFi.
          *
-         * 480 x 20 x 2 bytes = 19.2 KB each, x2 = 38.4 KB internal.
-         * Phase 0 tuning target: if frames still drop, this goes up first
-         * (docs/MEMORY.md §3). */
-        .bounce_buffer_size_px = BSP_LCD_H_RES * 20,
+         * 480 x 20 x 2 bytes = 19.2 KB each, x2 = 38.4 KB internal. See
+         * SPIKE_BOUNCE_ROWS above for why this stayed at 20 rather than the
+         * 40 tried first in docs/RISKS.md R1's fallback order. */
+        .bounce_buffer_size_px = BSP_LCD_H_RES * SPIKE_BOUNCE_ROWS,
         .num_fbs = 2,
         .flags = {
             .fb_in_psram = true,
@@ -132,7 +146,8 @@ esp_err_t spike_display_init(spike_display_t **out)
              BSP_LCD_H_RES, BSP_LCD_V_RES, BSP_LCD_PIXEL_CLOCK_HZ,
              (void *)g_disp.fb[0], (void *)g_disp.fb[1]);
     ESP_LOGI(TAG, "bounce buffers: 2 x %d px (%d bytes internal)",
-             BSP_LCD_H_RES * 20, BSP_LCD_H_RES * 20 * 2 * 2);
+             BSP_LCD_H_RES * SPIKE_BOUNCE_ROWS,
+             BSP_LCD_H_RES * SPIKE_BOUNCE_ROWS * 2 * 2);
 
     g_disp.window_start_us = esp_timer_get_time();
     g_disp.last_frame_us   = g_disp.window_start_us;
@@ -141,26 +156,46 @@ esp_err_t spike_display_init(spike_display_t **out)
     return ESP_OK;
 }
 
+void spike_display_reset_timing(spike_display_t *d)
+{
+    int64_t now = esp_timer_get_time();
+    d->last_frame_us    = now;
+    d->window_start_us  = now;
+    d->window_frames    = 0;
+    d->longest_frame_us = 0;
+}
+
 /*
  * Render one frame of a moving gradient into the back buffer and flip.
  *
  * The gradient is deliberately a full-screen write: it forces every byte of
  * the framebuffer across the bus every frame, which is the worst case and
  * therefore the case worth measuring.
+ *
+ * The pattern is computed ONCE per frame (480 pixels of scalar arithmetic,
+ * not 480x480) and then replicated down every row with memcpy. The first
+ * version of this function did the (r<<11)|(g<<5)|b computation per pixel,
+ * 230,400 times a frame -- that made the render loop CPU-bound on scalar
+ * math well below the panel's own ~60 Hz refresh rate, which produced
+ * "dropped frames" and low FPS that reflected compute cost, not the PSRAM
+ * bus contention docs/RISKS.md R1 is actually asking about. This still
+ * writes the entire framebuffer every frame -- the real traffic that
+ * matters -- without the render loop's own arithmetic being the bottleneck.
  */
 void spike_display_render_frame(spike_display_t *d, uint32_t phase)
 {
+    static uint16_t row_buf[BSP_LCD_H_RES];
+
     uint16_t *fb = d->fb[d->active];
     int64_t   t0 = esp_timer_get_time();
 
+    for (int x = 0; x < BSP_LCD_H_RES; x++) {
+        uint16_t r = (uint16_t)((x + phase) & 0x1F);
+        uint16_t g = (uint16_t)((x + phase) & 0x3F);
+        row_buf[x] = (uint16_t)((r << 11) | (g << 5) | (phase & 0x1F));
+    }
     for (int y = 0; y < BSP_LCD_V_RES; y++) {
-        uint16_t row = (uint16_t)((y + phase) & 0x1F);
-        for (int x = 0; x < BSP_LCD_H_RES; x++) {
-            uint16_t r = (uint16_t)(((x + phase) & 0x1F));
-            uint16_t g = (uint16_t)(((x + y + phase) & 0x3F));
-            fb[y * BSP_LCD_H_RES + x] =
-                (uint16_t)((r << 11) | (g << 5) | row);
-        }
+        memcpy(&fb[y * BSP_LCD_H_RES], row_buf, sizeof(row_buf));
     }
 
     d->buffer_ready = true;
@@ -173,6 +208,18 @@ void spike_display_render_frame(spike_display_t *d, uint32_t phase)
     uint32_t dt = (uint32_t)(t1 - d->last_frame_us);
     if (dt > d->longest_frame_us) {
         d->longest_frame_us = dt;
+    }
+    if (dt > 100000) {
+        /* 100 ms is well past a single dropped vsync (~16.5 ms) -- worth
+         * knowing exactly when this happens and whether it recurs. Its own
+         * "I (ms)" boot-relative timestamp lines up directly against the
+         * WiFi/TLS/NVS event log, which is the whole point: a stall that
+         * only ever happens once, early (e.g. during the WiFi connect / TLS
+         * handshake window), is a boot-time cost an always-on device pays
+         * once and never again -- not the same problem as one that recurs
+         * throughout normal operation. */
+        ESP_LOGW(TAG, "slow frame: %" PRIu32 " ms (frame #%" PRIu32 ")",
+                 dt / 1000, d->frames);
     }
     d->last_frame_us = t1;
     (void)t0;
@@ -191,10 +238,11 @@ void spike_display_render_frame(spike_display_t *d, uint32_t phase)
 }
 
 void spike_display_stats(const spike_display_t *d,
-                         uint32_t *frames, uint32_t *drops,
+                         uint32_t *frames, uint32_t *vsyncs, uint32_t *drops,
                          uint32_t *longest_us, float *fps_min)
 {
     *frames     = d->frames;
+    *vsyncs     = d->vsyncs;
     *drops      = d->drops;
     *longest_us = d->longest_frame_us;
     *fps_min    = (d->fps_min > 1e8f) ? 0.0f : d->fps_min;

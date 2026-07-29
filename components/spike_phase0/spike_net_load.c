@@ -10,6 +10,7 @@
 #include "spike_net_load.h"
 
 #include <inttypes.h>   /* PRIu32 -- see spike_report.c for why this matters */
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_crt_bundle.h"
@@ -28,12 +29,27 @@ static const char *TAG = "spike0.net";
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
+/* Bounded Range request, not the whole file: a plain GET against a 100 MB+
+ * file would run well past the spike duration on realistic WiFi throughput,
+ * and this component only makes ONE request per run (see net_load_task) --
+ * a loop of fresh reconnects against the same public host every ~2 s got
+ * every connection but the last dropped or 429'd during Phase 0 bring-up,
+ * which is the server correctly treating that pattern as abuse. One bounded
+ * range request is both realistic (an OTA/artwork fetch is one connection,
+ * not a poll loop) and reliably finishes inside a 120 s run. */
+#define SPIKE_NET_RANGE_BYTES (20u * 1024u * 1024u)
+
 static EventGroupHandle_t s_wifi_events;
 static int s_retries;
 
 /* Sampled from the HTTP event handler so we catch the peak DURING the
  * session, not after it has been torn down. */
 static volatile uint32_t s_internal_min_during;
+
+typedef struct {
+    uint32_t bytes;
+    int64_t  t_connected_us;
+} net_dl_ctx_t;
 
 static void wifi_handler(void *arg, esp_event_base_t base,
                          int32_t id, void *data)
@@ -95,7 +111,18 @@ esp_err_t spike_net_connect(const char *ssid, const char *password)
 
 static esp_err_t http_event(esp_http_client_event_t *evt)
 {
-    if (evt->event_id == HTTP_EVENT_ON_DATA) {
+    net_dl_ctx_t *ctx = (net_dl_ctx_t *)evt->user_data;
+
+    if (evt->event_id == HTTP_EVENT_ON_CONNECTED) {
+        /* TCP + TLS handshake done, no request/response exchanged yet -- the
+         * same boundary the old open()/fetch_headers() split measured. */
+        if (ctx != NULL) {
+            ctx->t_connected_us = esp_timer_get_time();
+        }
+    } else if (evt->event_id == HTTP_EVENT_ON_DATA) {
+        if (ctx != NULL) {
+            ctx->bytes += (uint32_t)evt->data_len;
+        }
         uint32_t f = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         if (f < s_internal_min_during) {
             s_internal_min_during = f;
@@ -119,12 +146,21 @@ void spike_net_download(const char *url, spike_net_result_t *out)
     uint32_t before = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     s_internal_min_during = before;
 
+    net_dl_ctx_t ctx = { .bytes = 0, .t_connected_us = 0 };
+
     esp_http_client_config_t cfg = {
         .url = url,
         .event_handler = http_event,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 20000,
         .buffer_size = 4096,
+        .user_data = &ctx,
+        /* esp_http_client_perform() below follows redirects itself (up to
+         * the default of 10). The manual open()/fetch_headers()/read()
+         * sequence this replaced does NOT -- it silently returned whatever
+         * short redirect body the server sent (~146 B for this URL) instead
+         * of the 10 MB file, so every "download" measurement was fictional:
+         * no real sustained WiFi/PSRAM bus traffic, no real transfer rate. */
     };
 
     int64_t t0 = esp_timer_get_time();
@@ -134,41 +170,37 @@ void spike_net_download(const char *url, spike_net_result_t *out)
         return;
     }
 
-    esp_err_t err = esp_http_client_open(client, 0);
-    int64_t t_handshake = esp_timer_get_time();
+    char range[32];
+    snprintf(range, sizeof(range), "bytes=0-%u", SPIKE_NET_RANGE_BYTES - 1u);
+    esp_http_client_set_header(client, "Range", range);
+
+    esp_err_t err = esp_http_client_perform(client);
+    int64_t t1 = esp_timer_get_time();
+
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "open: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "perform: %s", esp_err_to_name(err));
         esp_http_client_cleanup(client);
         return;
     }
 
-    esp_http_client_fetch_headers(client);
-
-    char buf[1024];
-    int total = 0;
-    int n;
-    while ((n = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
-        total += n;
-        uint32_t f = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        if (f < s_internal_min_during) {
-            s_internal_min_during = f;
-        }
-    }
-
-    int64_t t1 = esp_timer_get_time();
+    int status = esp_http_client_get_status_code(client);
+    int64_t t_handshake = (ctx.t_connected_us != 0) ? ctx.t_connected_us : t0;
 
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
-    out->bytes = (uint32_t)total;
+    out->bytes = ctx.bytes;
     out->handshake_ms = (uint32_t)((t_handshake - t0) / 1000);
     out->tls_heap_peak = (before > s_internal_min_during)
                        ? (before - s_internal_min_during) : 0;
     double secs = (double)(t1 - t_handshake) / 1e6;
-    out->kbps = (secs > 0.0) ? (double)total / 1024.0 / secs : 0.0;
-    out->ok = total > 0;
+    out->kbps = (secs > 0.0) ? (double)ctx.bytes / 1024.0 / secs : 0.0;
+    /* 206 Partial Content is the expected success status for a Range
+     * request; a plain 200 means the server ignored the Range header and
+     * sent the whole file, which is still a real, valid transfer. */
+    out->ok = (status == 200 || status == 206) && (ctx.bytes > 0);
 
-    ESP_LOGI(TAG, "downloaded %d B, handshake %" PRIu32 " ms, "
+    ESP_LOGI(TAG, "downloaded %" PRIu32 " B, status %d, handshake %" PRIu32 " ms, "
                   "TLS internal peak %" PRIu32 " B",
-             total, out->handshake_ms, out->tls_heap_peak);
+             out->bytes, status, out->handshake_ms, out->tls_heap_peak);
 }

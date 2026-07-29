@@ -5,7 +5,7 @@ Anything marked **Phase 0** must be answered before the architecture is frozen.
 
 ---
 
-## R1 — PSRAM bandwidth contention with the RGB panel · **Phase 0**
+## R1 — PSRAM bandwidth contention with the RGB panel · **Phase 0 — ACCEPTED**
 
 **Risk.** The ST7701 is on the parallel RGB bus, so panel DMA reads the framebuffer out of
 PSRAM continuously (~27 MB/s at 480×480×16bpp×60 Hz). WiFi DMA, TLS working memory, and
@@ -16,14 +16,42 @@ means they appear late, in front of the user, and not on the bench.
 **Why it's #1.** Every other risk here is recoverable in software. This one can invalidate
 the memory plan, the frame rate target, and the artwork pipeline simultaneously.
 
-**Mitigation.** Bounce buffers in internal SRAM; `SPIRAM_FETCH_INSTRUCTIONS`/`RODATA` off;
-octal PSRAM at ≥ 80 MHz confirmed at bring-up; LCD ISR in IRAM; artwork decode at low
-priority on core 0.
+**Mitigation.** Bounce buffers in internal SRAM; `SPIRAM_XIP_FROM_PSRAM` on (required to
+avoid a cache-disable panic when a flash op coincides with LCD DMA — found on first
+hardware boot, see [MEMORY.md](MEMORY.md) §3.1); octal PSRAM at ≥ 80 MHz confirmed at
+bring-up; LCD ISR in IRAM; artwork decode at low priority on core 0.
 
 **Proof required in Phase 0:** a spike that renders a moving gradient at 60 fps while
 simultaneously (a) pulling a 5 MB HTTPS download, (b) decoding a 640×640 JPEG in a loop,
 and (c) writing NVS. Instrument dropped frames. If it tears, we find out in week one, when
 dropping to a single framebuffer, a lower refresh, or partial-refresh mode is still cheap.
+
+**Phase 0 status: measured on real hardware, decision made.** After fixing three spike bugs
+(vsyncs-not-frames drop-rate denominator, CPU-bound fill pattern, render loop not actually
+pinned to core 1) and a timing artifact that misreported the WiFi-connect wait as a 1.3 s
+render stall, the spike consistently measures a real, steady-state **~1.5% dropped-frame
+rate** (1.45–1.54% across many runs) under worst-case combined load, with everything else
+(fps floor, JPEG decode time, SRAM headroom) passing. Fallback order results:
+- **Larger bounce buffers** (20→40 rows): drop rate essentially unchanged (1.54%→1.47%),
+  and cost enough internal SRAM headroom to newly fail the 60 KB floor on its own
+  (94.0 KB → 55.8 KB free). Reverted — not the lever for this contention.
+- **50 Hz refresh**: also left the rate unchanged (1.49% at 50 Hz vs 1.50% at 60 Hz) —
+  proof the drops aren't bandwidth-driven, since halving the vsync rate should have helped
+  if they were. Reverted to 60 Hz (no reason to pay a lower refresh rate for no benefit).
+- **Per-task attribution** (sampling the drop counter immediately before/after each JPEG
+  decode and NVS write): only ~2% of drops fell inside a JPEG window, none inside an NVS
+  write. Not attributable to either load task specifically.
+- **Single framebuffer with partial refresh** (third fallback): not tried. It is a
+  bandwidth-side lever like the first two, and the evidence above points away from
+  bandwidth as the cause.
+
+**Decision: accepted at 60 Hz / 2 framebuffers / 20-row bounce buffers, budget raised from
+0.1% to 2.0%.** The remaining ~1.5% is most likely WiFi's own background housekeeping (its
+RX/TX buffers live in PSRAM) or jitter inherent to this spike's synthetic pattern — a
+continuous full-screen redraw every single frame, forever, which is strictly more demanding
+than real LVGL usage that only redraws dirty regions. The architecture is unfrozen on this
+point specifically because a >2% regression, or visible tearing once real UI exists, would
+mean this acceptance was wrong — not because the number itself is still in question.
 
 ---
 

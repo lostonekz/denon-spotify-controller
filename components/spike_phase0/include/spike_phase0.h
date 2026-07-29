@@ -30,8 +30,14 @@ extern "C" {
 #endif
 
 typedef struct {
-    /* --- display --- */
+    /* --- display ---
+     * frames_rendered and vsyncs_total are two INDEPENDENT counters (CPU
+     * render-loop iterations vs. fixed-rate panel VSYNC ticks) and are not
+     * the same denominator. drop rate is frames_dropped/vsyncs_total, not
+     * frames_dropped/frames_rendered -- dividing by the wrong one produced a
+     * >100% "drop rate" the first time this spike ran on real hardware. */
     uint32_t frames_rendered;
+    uint32_t vsyncs_total;        /* panel VSYNC ticks during the run */
     uint32_t frames_dropped;      /* VSYNC arrived with the buffer unready */
     float    fps_avg;
     float    fps_min;             /* worst 1-second window: the number that matters */
@@ -52,6 +58,7 @@ typedef struct {
     uint32_t jpeg_decode_ms_avg;
     uint32_t jpeg_decode_ms_max;
     uint32_t jpeg_decodes;
+    uint32_t frames_dropped_during_jpeg;
 
     /* --- NVS --- */
     uint32_t nvs_write_ms_avg;

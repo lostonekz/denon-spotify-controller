@@ -111,17 +111,61 @@ into the design:
 
 - **Bounce buffers in internal SRAM** (`bb_invalidate_cache`), so DMA burst reads are
   serviced from SRAM and PSRAM is touched in larger, more efficient bursts.
-- `CONFIG_SPIRAM_FETCH_INSTRUCTIONS` and `CONFIG_SPIRAM_RODATA` stay **off** — code fetches
-  must not contend with scanout.
+- `CONFIG_SPIRAM_FETCH_INSTRUCTIONS`, `CONFIG_SPIRAM_RODATA`, and
+  `CONFIG_SPIRAM_XIP_FROM_PSRAM` are all **on** — see below; this reverses what an
+  earlier draft of this document said, for a correctness reason found on real hardware.
 - Octal PSRAM at ≥ 80 MHz, verified at bring-up rather than assumed.
 - The LCD ISR and everything it calls live in **IRAM**.
 - Artwork decode runs at priority 3 on core 0 specifically so it cannot saturate the bus
   during an animation on core 1.
 
-**Every number in §1 is provisional until the Phase 0 spike measures real throughput under
-combined load.** If the panel tears, the likely responses in order of preference are: larger
-bounce buffers → 50 Hz refresh → single framebuffer with partial refresh. Knowing which one
-we need in week one is worth an entire phase.
+### 3.1 XIP-from-PSRAM is required, not a bandwidth trade-off
+
+An earlier draft of this section kept `SPIRAM_FETCH_INSTRUCTIONS`/`RODATA` **off**,
+reasoning that keeping code and rodata out of PSRAM was the single most important R1
+mitigation — less traffic competing with the LCD scanout. That reasoning was incomplete,
+and Phase 0 caught it on the first hardware boot:
+
+```
+Guru Meditation Error: Core 0 panic'ed (Cache error).
+Cache disabled but cached memory region accessed
+```
+
+The backtrace showed two interrupted call chains: `nvs_flash_init()` mid-`esp_flash_read()`
+on one, and the LCD's GDMA end-of-frame ISR (`lcd_rgb_panel_fill_bounce_buffer`, refilling
+from the PSRAM framebuffer) on the other. **Flash and PSRAM share the same cache/MMU path
+on ESP32-S3.** A direct flash read briefly disables that cache; if the LCD's DMA interrupt
+fires in that window and touches the PSRAM framebuffer, the core panics. This is not a rare
+race — NVS writes (settings, WiFi state) and OTA checks are routine on a 24/7 device, and
+the display is refreshing continuously, so the two collide on ordinary operation, not under
+adversarial load.
+
+`CONFIG_SPIRAM_XIP_FROM_PSRAM` is ESP-IDF's own documented fix (see
+`components/esp_lcd/test_apps/rgb_lcd/sdkconfig.defaults.esp32s3` upstream) — it keeps the
+ext-mem cache available during flash operations, at the cost of requiring
+`FETCH_INSTRUCTIONS` and `RODATA`, i.e. code and rodata do live in PSRAM after all.
+
+**A guaranteed crash is strictly worse than the bus contention the old setting was guarding
+against.** The contention question doesn't go away, but it changes from something assumed
+away at compile time to something the Phase 0 spike is positioned to measure directly —
+which is the right place for that question to be answered.
+
+**Phase 0 measured this on real hardware and the decision is made: 60 Hz, 2 framebuffers,
+20-row (38 KiB) bounce buffers — the §1 table above, unchanged.** Under worst-case combined
+load (continuous full-screen redraw every frame, forever, plus JPEG decode and NVS writes
+running throughout), the spike consistently measures a real ~1.5% dropped-frame rate
+(1.45–1.54% across many runs). Both cheaper responses were tried first and neither moved
+it: doubling the bounce buffers left the rate unchanged while costing enough internal SRAM
+to fail its own 60 KiB floor; dropping to 50 Hz also left it unchanged (proof the drops
+aren't bandwidth-driven — halving the vsync rate should have helped if they were). Per-task
+attribution then showed only ~2% of drops fall inside a JPEG decode window and none inside
+an NVS write, so the remaining ~1.5% is most likely WiFi's own background housekeeping (its
+RX/TX buffers live in PSRAM — `WiFi/LWIP prefer SPIRAM`) or jitter inherent to this spike's
+synthetic full-redraw pattern, which is more demanding than real LVGL usage that only
+redraws dirty regions. Accepted at a 2.0% budget rather than the original 0.1% target — see
+[RISKS.md](RISKS.md) R1 for the full reasoning. The third fallback (single framebuffer with
+partial refresh) was not tried: it is a bandwidth-side lever like the first two, and the
+evidence points away from bandwidth as the cause.
 
 ---
 
