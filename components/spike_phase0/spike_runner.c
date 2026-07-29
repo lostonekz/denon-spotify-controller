@@ -125,12 +125,22 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
 
     g_ctx.running = true;
 
+    /* Every xTaskCreatePinnedToCore() call below checks its return value.
+     * An independent review caught that none of them did: a failed create
+     * (out of memory, the only realistic cause here) either left the
+     * render_task wait loop below spinning forever with no diagnostic, or
+     * let a load task silently not run while the rest of the report printed
+     * as if nothing were missing. render_task failing is the one that must
+     * not just log and continue -- see the early return after it. */
+
     /* Loads on core 0, alongside WiFi. Render loop is pinned to core 1 via
      * its own task (render_task) rather than run inline here -- see the
      * comment on render_task for why that distinction is load-bearing. This
      * mirrors the task placement in docs/ARCHITECTURE.md §4 -- which is
      * itself provisional and one of the things this spike is testing. */
-    xTaskCreatePinnedToCore(watermark_task, "wm", 3072, &g_ctx, 2, NULL, 0);
+    if (xTaskCreatePinnedToCore(watermark_task, "wm", 3072, &g_ctx, 2, NULL, 0) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create watermark task - SRAM/PSRAM watermarks will read 0");
+    }
 
     if (cfg->enable_jpeg_load) {
         /* Priority 1, not 3: docs/RISKS.md R1's own mitigation line says
@@ -140,15 +150,21 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
          * hardware arbitration question, not a FreeRTOS scheduling one),
          * but it does stop JPEG's decode loop from monopolizing core 0 CPU
          * time over WiFi's own housekeeping and the other load tasks. */
-        xTaskCreatePinnedToCore(jpeg_load_task, "jpeg", 4096, &g_ctx, 1, NULL, 0);
+        if (xTaskCreatePinnedToCore(jpeg_load_task, "jpeg", 4096, &g_ctx, 1, NULL, 0) != pdPASS) {
+            ESP_LOGE(TAG, "failed to create jpeg task - jpeg_decodes will read 0");
+        }
     }
     if (cfg->enable_nvs_load && nvs_ok) {
-        xTaskCreatePinnedToCore(nvs_load_task, "nvs", 4096, &g_ctx, 2, NULL, 0);
+        if (xTaskCreatePinnedToCore(nvs_load_task, "nvs", 4096, &g_ctx, 2, NULL, 0) != pdPASS) {
+            ESP_LOGE(TAG, "failed to create nvs task - nvs_writes will read 0");
+        }
     } else if (cfg->enable_nvs_load) {
         ESP_LOGW(TAG, "NVS load disabled because NVS did not initialise");
     }
     if (cfg->enable_tls_load && wifi_ok) {
-        xTaskCreatePinnedToCore(net_load_task, "net", 8192, &g_ctx, 5, NULL, 0);
+        if (xTaskCreatePinnedToCore(net_load_task, "net", 8192, &g_ctx, 5, NULL, 0) != pdPASS) {
+            ESP_LOGE(TAG, "failed to create net task - bytes_downloaded will read 0");
+        }
     } else if (cfg->enable_tls_load) {
         ESP_LOGW(TAG, "network load disabled because WiFi did not connect");
     }
@@ -158,7 +174,18 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
         .duration_s = cfg->duration_s,
         .done       = false,
     };
-    xTaskCreatePinnedToCore(render_task, "render", 3072, &render_ctx, 5, NULL, 1);
+    if (xTaskCreatePinnedToCore(render_task, "render", 3072, &render_ctx, 5, NULL, 1) != pdPASS) {
+        /* Without this task nothing ever sets render_ctx.done, so the wait
+         * loop below would spin forever. Nothing was measured -- stop the
+         * load tasks and return the zeroed report rather than hang. The
+         * printed verdict's "no panel vsyncs recorded at all" FAIL already
+         * says exactly this for a zeroed report; no separate message needed
+         * there. */
+        ESP_LOGE(TAG, "failed to create render task - cannot measure R1, aborting run");
+        g_ctx.running = false;
+        vTaskDelay(pdMS_TO_TICKS(500));   /* let any load tasks that did start exit cleanly */
+        return;
+    }
 
     while (!render_ctx.done) {
         vTaskDelay(pdMS_TO_TICKS(100));

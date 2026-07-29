@@ -6,8 +6,16 @@
 build/
 sdkconfig
 sdkconfig.old
+
+# managed_components/ is fetched FROM dependencies.lock (like node_modules
+# from package-lock.json) -- the lock file is what's committed and pinned
+# (docs/ARCHITECTURE.md §7), the fetched source is not. An independent
+# review caught these docs claiming dependencies.lock was committed when it
+# didn't even exist yet (no managed component had been added); it's real
+# now that espressif/esp_jpeg is a dependency, so this ignore entry for the
+# lock file itself was removed rather than left to keep contradicting the
+# docs.
 managed_components/
-dependencies.lock
 
 # Host test build output
 build_host/

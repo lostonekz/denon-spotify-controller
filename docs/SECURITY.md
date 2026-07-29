@@ -22,7 +22,7 @@ compiled in and always executed** — including on a developer's desk. What diff
 
 | | Development profile (default) | Production profile |
 |---|---|---|
-| Image signature | verified against a **dev key committed to this repo** | verified against a release key held offline |
+| Image signature | verified against a **dev key generated locally, gitignored** (§4) | verified against a release key held offline |
 | Verification failure | **hard fail** — image rejected | hard fail |
 | Anti-rollback | enforced in software (NVS counter) | enforced in software **and** eFuse secure version |
 | Secure Boot v2 | off | burned at manufacturing |
@@ -135,8 +135,13 @@ RISKS R14 (single-developer bus factor). Rotation support is the actual answer:
   release after that.
 - This means a compromised *or lost* key is recoverable as long as **one** valid key
   survives, rather than requiring physical access to every unit.
-- Dev key lives in `tools/keys/dev_ota.pem`, committed deliberately. It signs nothing that
-  matters, and its presence in the repo is what keeps the verification path exercised.
+- Dev key lives at `tools/keys/dev_ota_signing.pem` (path set in `sdkconfig.defaults`),
+  generated locally per `tools/keys/README.md` -- or fresh by CI on every run -- rather than
+  committed; `tools/keys/*.pem` is gitignored like any other private key. It signs nothing
+  that matters. What keeps the verification path exercised isn't the key sitting in the
+  repo, it's `tools/check_release.py`'s dev-profile gate: signing must be on in every
+  profile, so a dev build with no key present fails the gate instead of silently skipping
+  verification.
 - Release key lives offline, backed up independently of the source tree, with the backup
   location recorded in the project's operational notes — not in one person's memory.
 

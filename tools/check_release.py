@@ -135,6 +135,20 @@ def main():
                                 % (key, got, want, why))
         for h in dev_key_hits:
             failures.append("dev key material in a production build: %s" % h)
+
+        # scan_for_dev_key() only scans main/, components/, tools/keys/ file
+        # CONTENTS for the marker strings -- it never looks at sdkconfig
+        # itself, so a production build whose signing key config still
+        # points at the dev path was structurally invisible to it. An
+        # independent review caught that gap; this closes it directly.
+        signing_key = cfg.get("CONFIG_SECURE_BOOT_SIGNING_KEY", "")
+        for m in DEV_KEY_MARKERS:
+            if m in signing_key:
+                failures.append(
+                    "CONFIG_SECURE_BOOT_SIGNING_KEY=%r in production - "
+                    "points at the dev signing key (matched %r)"
+                    % (signing_key, m))
+                break
     else:
         for key, want, why in DEV_REQUIRED:
             if cfg.get(key) != want:
