@@ -8,6 +8,10 @@
 
 #include "spike_phase0.h"
 
+#include <inttypes.h>   /* PRIu32 -- uint32_t is a distinct type per toolchain
+                         * (xtensa-esp32s3-elf: long unsigned int; host gcc:
+                         * unsigned int), so %u mismatches under -Werror=format=
+                         * on target even though it is fine on the host. */
 #include <stdio.h>
 
 #include "esp_log.h"
@@ -26,14 +30,14 @@ void spike_phase0_print(const spike_report_t *r)
     printf("========================================================\n");
     printf(" PHASE 0 BANDWIDTH SPIKE  (docs/RISKS.md R1)\n");
     printf("========================================================\n");
-    printf(" duration                %u s\n", r->duration_s);
+    printf(" duration                %" PRIu32 " s\n", r->duration_s);
     printf("\n-- DISPLAY --------------------------------------------\n");
-    printf(" frames rendered         %u\n", r->frames_rendered);
-    printf(" frames dropped          %u  (%.2f%%)\n",
+    printf(" frames rendered         %" PRIu32 "\n", r->frames_rendered);
+    printf(" frames dropped          %" PRIu32 "  (%.2f%%)\n",
            r->frames_dropped,
            r->frames_rendered ? 100.0 * r->frames_dropped / r->frames_rendered : 0.0);
     printf(" fps avg / min           %.1f / %.1f\n", r->fps_avg, r->fps_min);
-    printf(" longest frame           %u us\n", r->longest_frame_us);
+    printf(" longest frame           %" PRIu32 " us\n", r->longest_frame_us);
 
     printf("\n-- MEMORY (minimum free under load) -------------------\n");
     printf(" internal SRAM free      %.1f KB\n", KB(r->internal_free_min));
@@ -42,20 +46,20 @@ void spike_phase0_print(const spike_report_t *r)
 
     printf("\n-- TLS ------------------------------------------------\n");
     printf(" internal heap peak      %.1f KB per session\n", KB(r->tls_heap_peak));
-    printf(" handshake               %u ms\n", r->tls_handshake_ms);
+    printf(" handshake               %" PRIu32 " ms\n", r->tls_handshake_ms);
     printf(" downloaded              %.1f KB @ %.1f KB/s\n",
            KB(r->bytes_downloaded), r->download_kbps);
 
     printf("\n-- JPEG DECODE ----------------------------------------\n");
-    printf(" decodes                 %u\n", r->jpeg_decodes);
-    printf(" avg / max               %u / %u ms\n",
+    printf(" decodes                 %" PRIu32 "\n", r->jpeg_decodes);
+    printf(" avg / max               %" PRIu32 " / %" PRIu32 " ms\n",
            r->jpeg_decode_ms_avg, r->jpeg_decode_ms_max);
 
     printf("\n-- NVS ------------------------------------------------\n");
-    printf(" writes                  %u\n", r->nvs_writes);
-    printf(" avg / max               %u / %u ms\n",
+    printf(" writes                  %" PRIu32 "\n", r->nvs_writes);
+    printf(" avg / max               %" PRIu32 " / %" PRIu32 " ms\n",
            r->nvs_write_ms_avg, r->nvs_write_ms_max);
-    printf(" frames dropped during   %u\n", r->frames_dropped_during_nvs);
+    printf(" frames dropped during   %" PRIu32 "\n", r->frames_dropped_during_nvs);
 
     printf("\n-- ENVIRONMENT ----------------------------------------\n");
     printf(" temperature             %.1f -> %.1f C\n",
@@ -102,12 +106,12 @@ void spike_phase0_print(const spike_report_t *r)
     }
 
     if (r->jpeg_decode_ms_max > 400u) {
-        printf(" FAIL   JPEG decode max %u ms > 400 ms "
+        printf(" FAIL   JPEG decode max %" PRIu32 " ms > 400 ms "
                "(artwork would visibly lag a track change)\n",
                r->jpeg_decode_ms_max);
         ok = false;
     } else {
-        printf(" pass   JPEG decode max %u ms\n", r->jpeg_decode_ms_max);
+        printf(" pass   JPEG decode max %" PRIu32 " ms\n", r->jpeg_decode_ms_max);
     }
 
     if (r->temp_c_end > 75.0f) {

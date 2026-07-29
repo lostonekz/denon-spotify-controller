@@ -9,6 +9,7 @@
 
 #include "spike_net_load.h"
 
+#include <inttypes.h>   /* PRIu32 -- see spike_report.c for why this matters */
 #include <string.h>
 
 #include "esp_event.h"
@@ -166,6 +167,7 @@ void spike_net_download(const char *url, spike_net_result_t *out)
     out->kbps = (secs > 0.0) ? (double)total / 1024.0 / secs : 0.0;
     out->ok = total > 0;
 
-    ESP_LOGI(TAG, "downloaded %d B, handshake %u ms, TLS internal peak %u B",
+    ESP_LOGI(TAG, "downloaded %d B, handshake %" PRIu32 " ms, "
+                  "TLS internal peak %" PRIu32 " B",
              total, out->handshake_ms, out->tls_heap_peak);
 }

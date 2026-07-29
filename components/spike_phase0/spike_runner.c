@@ -8,6 +8,7 @@
 
 #include "spike_phase0.h"
 
+#include <inttypes.h>   /* PRIu32 -- see spike_report.c for why this matters */
 #include <string.h>
 
 #include "spike_display_load.h"
@@ -186,7 +187,7 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
     memset(&g_ctx, 0, sizeof(g_ctx));
     g_ctx.cfg = cfg;
 
-    ESP_LOGI(TAG, "Phase 0 spike: %u s of combined load", cfg->duration_s);
+    ESP_LOGI(TAG, "Phase 0 spike: %" PRIu32 " s of combined load", cfg->duration_s);
 
     if (spike_display_init(&g_ctx.disp) != ESP_OK) {
         ESP_LOGE(TAG, "display init failed - cannot measure R1");

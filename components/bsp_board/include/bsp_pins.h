@@ -18,6 +18,8 @@
 #ifndef BSP_PINS_H
 #define BSP_PINS_H
 
+#include "driver/gpio.h"   /* GPIO_NUM_* */
+
 /* ---- I2C: touch, IO expander, IMU all share this bus ----
  * Kept clear of the 20 pins the RGB bus consumes. tools/check_pins.py
  * enforces that; it caught three collisions in the first draft of this file. */
