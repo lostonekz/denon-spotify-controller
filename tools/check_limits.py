@@ -18,8 +18,15 @@ LIMIT = 400
 SOURCE_EXT = (".c", ".h")
 DOC_EXT = (".md",)
 
-SKIP_DIRS = {".git", "build", "managed_components", "_build", "__pycache__",
-             ".venv", "node_modules"}
+SKIP_DIRS = {".git", "managed_components", "__pycache__", ".venv", "node_modules"}
+
+
+def _is_build_dir(name):
+    # Matches "build" (ESP-IDF's own dir) and "build_host"/"build_asan"
+    # (docs/DEVELOPMENT.md) by prefix, not by an exact-match list, so the
+    # next build-dir rename doesn't silently reopen this gap the way the
+    # build/host -> build_host rename just did.
+    return name == "build" or name.startswith("build_")
 
 # Generated files are excluded: their length is a function of the table they
 # are generated from, and splitting them would mean splitting the table.
@@ -35,7 +42,7 @@ def scan(root, exts, limit):
     over = []
     total = 0
     for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not _is_build_dir(d)]
         for f in files:
             if not f.endswith(exts):
                 continue

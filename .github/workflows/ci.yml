@@ -36,11 +36,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S test/host -B build/host -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S test/host -B build_host -DCMAKE_BUILD_TYPE=Debug
       - name: Build
-        run: cmake --build build/host --parallel
+        run: cmake --build build_host --parallel
       - name: Test
-        run: ctest --test-dir build/host --output-on-failure
+        run: ctest --test-dir build_host --output-on-failure
 
   host-tests-sanitizers:
     name: Host tests (ASan + UBSan)
@@ -52,13 +52,13 @@ jobs:
       # parser actually gets caught, rather than in the field.
       - name: Configure
         run: >
-          cmake -S test/host -B build/asan
+          cmake -S test/host -B build_asan
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -g"
       - name: Build
-        run: cmake --build build/asan --parallel
+        run: cmake --build build_asan --parallel
       - name: Test
-        run: ctest --test-dir build/asan --output-on-failure
+        run: ctest --test-dir build_asan --output-on-failure
 
   firmware:
     name: Firmware build (ESP-IDF)

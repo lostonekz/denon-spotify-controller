@@ -16,11 +16,16 @@ config DSC_SPIKE_WIFI_PASSWORD
 
 config DSC_SPIKE_URL
     string "HTTPS URL to download repeatedly during the spike"
-    default "https://www.google.com/"
+    default "https://ash-speed.hetzner.com/10MB.bin"
     help
         Should be at least a few megabytes so the TLS session and WiFi DMA
-        stay busy for the whole run. A tiny page finishes instantly and
-        measures nothing.
+        stay busy for the whole run. A tiny page (the old default,
+        google.com) finishes instantly and measures nothing.
+
+        The default points at a fixed-size bandwidth-test file on
+        infrastructure built for exactly this kind of repeated automated
+        download. Do not point this at an arbitrary small site -- the spike
+        hits it in a loop roughly every 500 ms for the full run duration.
 
 endmenu
 

@@ -29,15 +29,22 @@ python tools/run_all_checks.py --root .
 python tools/test_gates.py
 
 # Host tests — needs a C compiler and CMake, no ESP-IDF
-cmake -S test/host -B build/host
-cmake --build build/host
-ctest --test-dir build/host --output-on-failure
+# (Linux/macOS: the two -D flags below are unnecessary; see docs/DEVELOPMENT.md
+#  for why Windows needs them explicitly — the short version is that CMake
+#  defaults to looking for MSVC's cl.exe, which usually isn't installed.)
+cmake -S test/host -B build_host -G Ninja -DCMAKE_C_COMPILER=clang
+cmake --build build_host --parallel
+ctest --test-dir build_host --output-on-failure
 
 # Firmware / Phase 0 spike — needs ESP-IDF v5.5+ and hardware
 idf.py set-target esp32s3
 idf.py menuconfig     # set Phase 0 spike WiFi SSID/password and URL
 idf.py build flash monitor
 ```
+
+Full setup instructions (what to install, exact winget package IDs on
+Windows, why the plain CMake invocation fails on a fresh machine) are in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## The gates
 

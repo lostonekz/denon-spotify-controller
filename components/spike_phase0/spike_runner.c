@@ -14,6 +14,7 @@
 #include "spike_display_load.h"
 #include "spike_net_load.h"
 
+#include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -36,6 +37,10 @@ typedef struct {
     volatile uint32_t drops_during_nvs;
     volatile uint32_t internal_min;
     volatile uint32_t psram_min;
+    volatile uint32_t tls_heap_peak;
+    volatile uint32_t tls_handshake_ms;
+    volatile uint32_t bytes_downloaded;
+    volatile float    download_kbps;
     spike_display_t  *disp;
     const spike_config_t *cfg;
 } spike_ctx_t;
@@ -43,6 +48,19 @@ typedef struct {
 static spike_ctx_t g_ctx;
 
 /* ---------------------------------------------------------------- */
+
+static esp_err_t init_nvs_for_spike(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
 
 /*
  * JPEG load. A real 640x640 decode at 1/2 scale is what svc_artwork will do
@@ -151,6 +169,16 @@ static void net_load_task(void *arg)
 
     while (c->running) {
         spike_net_download(c->cfg->download_url, &r);
+        if (r.ok) {
+            if (r.tls_heap_peak > c->tls_heap_peak) {
+                c->tls_heap_peak = r.tls_heap_peak;
+            }
+            if (r.handshake_ms > c->tls_handshake_ms) {
+                c->tls_handshake_ms = r.handshake_ms;
+            }
+            c->bytes_downloaded = r.bytes;
+            c->download_kbps    = r.kbps;
+        }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     vTaskDelete(NULL);
@@ -183,7 +211,16 @@ static void watermark_task(void *arg)
 
 void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
 {
+    if (out == NULL) {
+        return;
+    }
+
     memset(out, 0, sizeof(*out));
+    if (cfg == NULL || cfg->duration_s == 0u) {
+        ESP_LOGE(TAG, "invalid Phase 0 spike config");
+        return;
+    }
+
     memset(&g_ctx, 0, sizeof(g_ctx));
     g_ctx.cfg = cfg;
 
@@ -194,8 +231,15 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
         return;
     }
 
+    bool nvs_ok = true;
+    if (cfg->enable_wifi_load || cfg->enable_nvs_load) {
+        nvs_ok = (init_nvs_for_spike() == ESP_OK);
+    }
+
     if (cfg->enable_wifi_load) {
-        if (spike_net_connect(cfg->wifi_ssid, cfg->wifi_password) != ESP_OK) {
+        if (!nvs_ok) {
+            ESP_LOGW(TAG, "no NVS: skipping WiFi load");
+        } else if (spike_net_connect(cfg->wifi_ssid, cfg->wifi_password) != ESP_OK) {
             ESP_LOGW(TAG, "no WiFi: R1 numbers will be OPTIMISTIC, since "
                           "WiFi DMA is a primary contender for the PSRAM bus");
         }
@@ -211,8 +255,10 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
     if (cfg->enable_jpeg_load) {
         xTaskCreatePinnedToCore(jpeg_load_task, "jpeg", 4096, &g_ctx, 3, NULL, 0);
     }
-    if (cfg->enable_nvs_load) {
+    if (cfg->enable_nvs_load && nvs_ok) {
         xTaskCreatePinnedToCore(nvs_load_task, "nvs", 4096, &g_ctx, 2, NULL, 0);
+    } else if (cfg->enable_nvs_load) {
+        ESP_LOGW(TAG, "NVS load disabled because NVS did not initialise");
     }
     if (cfg->enable_tls_load) {
         xTaskCreatePinnedToCore(net_load_task, "net", 8192, &g_ctx, 5, NULL, 0);
@@ -256,4 +302,9 @@ void spike_phase0_run(const spike_config_t *cfg, spike_report_t *out)
         ? g_ctx.nvs_ms_total / g_ctx.nvs_writes : 0;
     out->nvs_write_ms_max = g_ctx.nvs_ms_max;
     out->frames_dropped_during_nvs = g_ctx.drops_during_nvs;
+
+    out->tls_heap_peak    = g_ctx.tls_heap_peak;
+    out->tls_handshake_ms = g_ctx.tls_handshake_ms;
+    out->bytes_downloaded = g_ctx.bytes_downloaded;
+    out->download_kbps    = g_ctx.download_kbps;
 }

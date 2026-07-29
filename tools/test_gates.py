@@ -22,19 +22,36 @@ import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-SKIP_TOP = {".git", "build", "managed_components", "__pycache__", ".venv"}
-
 
 def clone_repo(dst):
-    for entry in os.listdir(REPO):
-        if entry in SKIP_TOP:
+    """Copy exactly the files git tracks, with their current on-disk content
+    (including uncommitted edits).
+
+    Deliberately NOT a hand-maintained exclusion list. An early version of
+    this function skipped a fixed set of directory names, and every one of
+    the three build directories in this project's history (build/,
+    build_host/, build_asan/) has at some point slipped past a list like
+    that -- most recently taking check_limits.py down with it the moment
+    build/host was renamed to build_host. A generated `sdkconfig` at the
+    repo root caused the same failure mode here: it isn't a directory, so no
+    directory-exclusion list would ever have caught it, and it silently
+    outranked the sdkconfig.defaults files the sdkconfig/release_guard
+    mutations edit, making both gates look broken when they were not.
+
+    `git ls-files` is authoritative and self-maintaining: it excludes
+    exactly what .gitignore excludes, automatically, forever, with no
+    parallel list for this function to fall out of sync with.
+    """
+    files = subprocess.run(
+        ["git", "-C", REPO, "ls-files", "-z"],
+        capture_output=True, check=True).stdout.decode("utf-8")
+    for rel in files.split("\0"):
+        if not rel:
             continue
-        src = os.path.join(REPO, entry)
-        tgt = os.path.join(dst, entry)
-        if os.path.isdir(src):
-            shutil.copytree(src, tgt, ignore=shutil.ignore_patterns(*SKIP_TOP))
-        else:
-            shutil.copy2(src, tgt)
+        src = os.path.join(REPO, rel)
+        tgt = os.path.join(dst, rel)
+        os.makedirs(os.path.dirname(tgt), exist_ok=True)
+        shutil.copy2(src, tgt)
 
 
 def run_gate(root, script, extra=None):

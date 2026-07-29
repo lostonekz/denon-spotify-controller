@@ -50,6 +50,7 @@ def main():
         print("=" * 68)
         print("GATE: %s" % name)
         print("=" * 68)
+        sys.stdout.flush()
         cmd = [sys.executable, path]
         if script != "denon_mv_oracle.py":
             cmd += ["--root", root]

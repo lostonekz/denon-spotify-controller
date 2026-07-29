@@ -1,8 +1,11 @@
 # Host test harness. Runs on the dev machine, no ESP32 involved.
 #
-#   cmake -S test/host -B build/host
-#   cmake --build build/host
-#   ctest --test-dir build/host --output-on-failure
+#   cmake -S test/host -B build_host
+#   cmake --build build_host
+#   ctest --test-dir build_host --output-on-failure
+#
+# Not "build/host": ESP-IDF owns build/ outright and refuses to reuse a
+# directory that isn't purely its own CMake build dir.
 #
 # Deliberately a plain CMake project, NOT an ESP-IDF one: these tests must be
 # runnable by anyone with a C compiler, with no toolchain install. That is what

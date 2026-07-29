@@ -12,6 +12,7 @@
 #include <inttypes.h>   /* PRIu32 -- see spike_report.c for why this matters */
 #include <string.h>
 
+#include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
@@ -21,7 +22,6 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
-#include "nvs_flash.h"
 
 static const char *TAG = "spike0.net";
 
@@ -59,13 +59,6 @@ static void wifi_handler(void *arg, esp_event_base_t base,
 
 esp_err_t spike_net_connect(const char *ssid, const char *password)
 {
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(err);
-
     s_wifi_events = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -113,7 +106,15 @@ static esp_err_t http_event(esp_http_client_event_t *evt)
 
 void spike_net_download(const char *url, spike_net_result_t *out)
 {
+    if (out == NULL) {
+        return;
+    }
+
     memset(out, 0, sizeof(*out));
+    if (url == NULL || url[0] == '\0') {
+        ESP_LOGE(TAG, "download URL is empty");
+        return;
+    }
 
     uint32_t before = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     s_internal_min_during = before;

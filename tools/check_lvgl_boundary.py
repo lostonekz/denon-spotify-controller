@@ -15,6 +15,7 @@ Source-level pre-check runs anywhere and catches the common case early.
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -22,11 +23,28 @@ import sys
 
 LV_SYM = re.compile(r"^lv_[A-Za-z0-9_]+$")
 LV_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]((?:lvgl|lv_)[^>"]*)[>"]', re.M)
+IDF_COMPONENT_RE = re.compile(r"/esp-idf/([^/]+)/")
+IDF_TARGET_RE = re.compile(r"/__idf_([^/.]+)\.dir/")
 
 SKIP_DIRS = {".git", "build", "managed_components", "__pycache__"}
 
 # Only these components may reference LVGL.
 UI_COMPONENTS = {"ui"}
+
+
+def load_project_components(root):
+    path = os.path.join(root, "tools", "arch_rules.json")
+    with open(path, encoding="utf-8") as fh:
+        rules = json.load(fh)
+    return set(rules["component_layer"])
+
+
+def object_component(norm_path):
+    m = IDF_TARGET_RE.search(norm_path)
+    if m:
+        return m.group(1)
+    m = IDF_COMPONENT_RE.search(norm_path)
+    return m.group(1) if m else None
 
 
 def source_precheck(root):
@@ -65,7 +83,7 @@ def find_nm():
     return None
 
 
-def symbol_check(root, build_dir, nm):
+def symbol_check(root, build_dir, nm, project_components):
     """Post-link: undefined lv_* references from non-ui objects."""
     violations = []
     checked = 0
@@ -78,11 +96,10 @@ def symbol_check(root, build_dir, nm):
             path = os.path.join(dirpath, f)
             norm = path.replace(os.sep, "/")
 
-            # Only inspect our own components; skip IDF and LVGL's own objects.
-            if "/esp-idf/" in norm and "/components/" not in norm:
-                pass
-            if any("/%s.dir/" % c in norm or "/%s/" % c in norm
-                   for c in UI_COMPONENTS):
+            comp = object_component(norm)
+            if comp not in project_components:
+                continue
+            if comp in UI_COMPONENTS:
                 continue
             if "lvgl" in norm.lower():
                 continue
@@ -122,7 +139,8 @@ def main():
             print("  NOTE: no nm found; symbol check skipped "
                   "(source pre-check still ran)")
         else:
-            checked, sym_v = symbol_check(root, build_dir, nm)
+            project_components = load_project_components(root)
+            checked, sym_v = symbol_check(root, build_dir, nm, project_components)
             print("  symbol check: %d object(s) via %s" % (checked, nm))
             violations.extend(sym_v)
     else:

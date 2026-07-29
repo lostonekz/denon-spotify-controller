@@ -1,4 +1,8 @@
 # ESP-IDF build output
+# `build/` is ESP-IDF's own build directory (idf.py owns it outright and
+# refuses to reuse a directory that isn't purely its own). Host test builds
+# therefore live in build_host/ and build_asan/, siblings rather than
+# children, so the two toolchains never fight over the same root.
 build/
 sdkconfig
 sdkconfig.old
@@ -6,8 +10,8 @@ managed_components/
 dependencies.lock
 
 # Host test build output
-build/host/
-build/asan/
+build_host/
+build_asan/
 
 # Signing keys — never commit real keys. The dev key referenced in
 # sdkconfig.defaults is generated locally per docs/SECURITY.md §4 and

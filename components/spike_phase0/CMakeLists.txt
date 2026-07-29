@@ -15,6 +15,6 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES     bsp_board
     PRIV_REQUIRES esp_lcd esp_timer esp_wifi esp_http_client esp-tls nvs_flash
-                  esp_driver_gpio esp_driver_i2c esp_driver_ledc driver
+                  mbedtls esp_driver_gpio esp_driver_i2c esp_driver_ledc driver
                   esp_psram esp_hw_support
 )
