@@ -5,23 +5,14 @@
     "pip install. A gate with a dependency is a gate that gets skipped."
   ],
 
-  "_phase0_note": [
-    "'spike' is a PHASE 0 ONLY layer for the throwaway R1 measurement harness.",
-    "It has broad permissions so its layering violations are DECLARED rather",
-    "than accidental. Delete the spike layer, the spike_phase0 entry, and the",
-    "app -> spike edge together when Phase 0 completes. If this note is still",
-    "here after Phase 1 starts, that is the bug."
-  ],
-
   "layers": {
-    "app":  ["ui", "core", "svc", "net", "hal", "bsp", "idf", "spike"],
+    "app":  ["ui", "core", "svc", "net", "hal", "bsp", "idf"],
     "ui":   ["core", "lvgl", "idf", "ui_hal_glue"],
-    "core": ["idf_freertos"],
+    "core": ["core", "idf_freertos"],
     "svc":  ["core", "net", "idf"],
     "net":  ["core", "idf"],
     "hal":  ["bsp", "idf"],
-    "bsp":  ["idf"],
-    "spike":["core", "hal", "bsp", "net", "idf", "lvgl"]
+    "bsp":  ["idf"]
   },
 
   "component_layer": {
@@ -38,14 +29,15 @@
     "svc_storage":   "svc",
     "svc_diagnostics": "svc",
     "svc_supervisor":  "svc",
+    "svc_logging":   "svc",
+    "svc_scheduler": "svc",
     "net_http":      "net",
     "net_wifi":      "net",
     "net_time":      "net",
     "hal_display":   "hal",
     "hal_touch":     "hal",
     "hal_backlight": "hal",
-    "bsp_board":     "bsp",
-    "spike_phase0":  "spike"
+    "bsp_board":     "bsp"
   },
 
   "_ui_hal_glue_comment": [

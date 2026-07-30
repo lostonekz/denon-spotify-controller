@@ -18,7 +18,7 @@ denon-spotify-controller/
 ├── sdkconfig.defaults.esp32s3          # SoC-specific, committed
 ├── dependencies.lock                   # pinned component versions, committed
 ├── tools/
-│   ├── arch_rules.yml                  # allowed inter-component edges
+│   ├── arch_rules.json                 # allowed inter-component edges
 │   ├── check_includes.py
 │   ├── check_limits.py
 │   └── gen_assets.py                   # fonts/icons -> LVGL C arrays

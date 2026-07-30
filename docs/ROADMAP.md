@@ -50,6 +50,26 @@ expensive.
 **Exit criteria:** device boots, all tasks running, diagnostics reports heap and stack
 watermarks over UART, CI green, layering violations fail the build.
 
+**Met.** All of Tier 0–3 built and verified: `core_types`/`core_pool`/`core_fsm`/
+`core_eventbus`/`core_state`, then `svc_storage`/`svc_scheduler`/`svc_logging`/
+`svc_settings`/`svc_diagnostics`/`svc_supervisor`, then the `app_wiring`/`app_start`
+composition root — which replaced and fully removed the Phase 0 spike, per
+`arch_rules.json`'s own note that its presence past this point is a bug. 13 Unity suites
+pass on host, the 9-gate local suite is green, and a clean ESP-IDF rebuild produces zero
+compiler warnings. Confirmed on real hardware: boot completes, `svc_supervisor` reports
+all 5 services `READY`, and `svc_diagnostics` reports real heap/PSRAM/per-task-stack
+numbers over UART every 5 s — the coredump-retention path also found and correctly
+recorded a genuine leftover dump from earlier bring-up, an unplanned proof against real
+data rather than a fake. Two real gate bugs found while implementing (the `core` layer
+had no self-edge, so no core module could include another core module's header; this
+doc's own `arch_rules.yml` references were stale — the gate reads `.json`) are fixed.
+Coredump *export* (USB/HTTP, pairing PIN) is deferred to Phase 2+/5+ — its prerequisites
+(`net_http`, a fault screen) don't exist yet; retention and UART reporting, which the exit
+criteria actually asks for, are done. `kv_store_if_t` lives in `core_types`, not
+`svc_storage`, so sibling services can depend on the interface without a forbidden
+`svc`→`svc` edge; the same constraint is why `svc_settings`/`svc_diagnostics` never call
+`svc_scheduler` directly and instead expose a plain `_tick()` that `app_wiring` schedules.
+
 ---
 
 ## Phase 2 — Connectivity and the update path

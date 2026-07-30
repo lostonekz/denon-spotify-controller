@@ -178,7 +178,7 @@ Architecture that isn't enforced decays within a year. Six gates in CI, all chea
 
 1. **Include linter** — `tools/check_includes.py` walks `components/*/`, parses `#include`
    lines, and fails on any edge violating the layer table. Allowed edges declared in
-   `tools/arch_rules.yml`.
+   `tools/arch_rules.json`.
 2. **Component isolation** — each `CMakeLists.txt` declares a minimal
    `REQUIRES`/`PRIV_REQUIRES`. If `ui` doesn't list `svc_spotify`, the include physically
    cannot compile. CMake is the primary enforcement; the linter catches the rest.
