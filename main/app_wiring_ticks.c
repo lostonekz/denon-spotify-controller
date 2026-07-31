@@ -5,6 +5,8 @@
 
 #include "esp_system.h"
 
+#include "app_wiring_volume.h"
+
 void settings_tick_trampoline(void *ctx)    { svc_settings_tick((svc_settings_t *)ctx); }
 void diagnostics_tick_trampoline(void *ctx) { svc_diagnostics_report_tick((svc_diagnostics_t *)ctx); }
 void net_time_tick_trampoline(void *ctx)    { net_time_tick((net_time_t *)ctx); }
@@ -100,21 +102,67 @@ void denon_settings_relay_tick_trampoline(void *ctx)
 }
 
 /* EVENTS_AND_STATE.md §5.1's single intent queue, drained by a dispatcher
- * that routes by intent_domain_t -- one real case today
- * (INTENT_DOMAIN_DENON); Phase 4/5 add a case, not a rewrite. Not routed
- * through core_eventbus -- see APP_INTENT_QUEUE_DEPTH's comment in
- * app_ctx.h for why intent_t needs its own dedicated queue. */
+ * that routes by intent_domain_t. Not routed through core_eventbus -- see
+ * APP_INTENT_QUEUE_DEPTH's comment in app_ctx.h for why intent_t needs its
+ * own dedicated queue.
+ *
+ * A separate helper (not inlined into the tick function) so
+ * INTENT_DOMAIN_MULTI can recurse into it exactly once with the resolved
+ * single-domain intent -- app_wiring_resolve_multi_intent() only resolves,
+ * it never submits, so this is the one and only place any intent actually
+ * reaches a service. */
+static void dispatch_one_intent(app_ctx_t *a, const intent_t *intent)
+{
+    switch (intent->domain) {
+    case INTENT_DOMAIN_DENON:
+        svc_denon_submit_intent(&a->svc_denon, intent);
+        break;
+    case INTENT_DOMAIN_PLAYBACK:
+        svc_spotify_submit_intent(&a->svc_spotify, intent);
+        break;
+    case INTENT_DOMAIN_MULTI: {
+        intent_t resolved = app_wiring_resolve_multi_intent(a, intent);
+        if (resolved.domain != INTENT_DOMAIN_COUNT) {
+            dispatch_one_intent(a, &resolved);   /* bounded -- MULTI never resolves to MULTI */
+        }
+        break;
+    }
+    default:
+        break;   /* no other domain has a real consumer yet */
+    }
+}
+
 void intent_dispatch_tick_trampoline(void *ctx)
 {
     app_ctx_t *a = (app_ctx_t *)ctx;
     intent_t intent;
     while (xQueueReceive(a->intent_queue, &intent, 0) == pdTRUE) {
-        switch (intent.domain) {
-        case INTENT_DOMAIN_DENON:
-            svc_denon_submit_intent(&a->svc_denon, &intent);
-            break;
-        default:
-            break;   /* no other domain has a real consumer yet */
+        dispatch_one_intent(a, &intent);
+    }
+}
+
+/* Phase 4 plan §8: verified directly against svc_ota_download.c/svc_ota.c
+ * that these are the only two events svc_ota ever actually publishes
+ * (OTA_EVT_AVAILABLE/OTA_EVT_APPLIED are defined but never published) --
+ * no new OTA-side publish path was needed for this relay. */
+void ota_artwork_relay_tick_trampoline(void *ctx)
+{
+    app_ctx_t *a = (app_ctx_t *)ctx;
+    event_t evt;
+    while (core_eventbus_poll(&a->bus, a->ota_artwork_relay_sub, &evt)) {
+        if (evt.topic != TOPIC_OTA) {
+            continue;
         }
+        if (evt.u.ota.kind == OTA_EVT_PROGRESS && !a->artwork_suspended_for_ota) {
+            a->artwork_suspended_for_ota = true;
+            svc_artwork_suspend(&a->svc_artwork);
+        } else if (evt.u.ota.kind == OTA_EVT_FAILED && a->artwork_suspended_for_ota) {
+            a->artwork_suspended_for_ota = false;
+            svc_artwork_resume(&a->svc_artwork);
+        }
+        /* OTA_EVT_APPLIED never actually fires -- applying reboots the
+         * device via esp_restart() first, so svc_artwork simply starts
+         * fresh on the next boot; no explicit resume-on-success path
+         * needed here. */
     }
 }

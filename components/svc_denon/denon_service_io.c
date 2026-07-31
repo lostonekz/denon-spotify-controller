@@ -113,12 +113,20 @@ static void handle_line(svc_denon_t *d, const char *line)
      * Dropped, not fatal: one unparsed push event is not a dead link. */
 }
 
-void denon_service_io_tick(svc_denon_t *d)
+/* Returns true if this tick did real blocking work (telnet's select() waited
+ * close to its own timeout, or a due HTTP poll performed an actual request),
+ * false if it returned essentially immediately (no transport up, or HTTP's
+ * poll() found its own interval not yet due). denon_service_task uses this
+ * to add a bounded sleep exactly when nothing blocking happened -- see the
+ * Tier -1 fix note in denon_service_target.c; without it, every
+ * disconnected/backoff state and every idle tick between HTTP polls spun
+ * the task at 100% CPU with no delay anywhere in the loop. */
+bool denon_service_io_tick(svc_denon_t *d)
 {
     denon_link_state_t s = denon_link_fsm_current_state(&d->state.link_fsm);
     denon_transport_if_t *active = active_transport(d, s);
     if (active == NULL) {
-        return;
+        return false;
     }
 
     int64_t now = d->clock.now_us(d->clock.ctx);
@@ -132,7 +140,7 @@ void denon_service_io_tick(svc_denon_t *d)
     if (have_cmd) {
         if (!active->send_cmd(active->ctx, cmd.cmd)) {
             dispatch_link_lost(d, s);
-            return;   /* don't also poll a link just discovered dead this tick */
+            return true;   /* don't also poll a link just discovered dead this tick */
         }
         /* EVENTS_AND_STATE.md §6.4's "the log is the entire debugging
          * story" -- this is the one line that lets a real-hardware
@@ -142,7 +150,9 @@ void denon_service_io_tick(svc_denon_t *d)
     }
 
     char line[DENON_TRANSPORT_LINE_BUF_LEN];
+    int64_t poll_start = d->clock.now_us(d->clock.ctx);
     denon_transport_poll_result_t pr = active->poll(active->ctx, line, sizeof(line), DENON_IO_POLL_TIMEOUT_MS);
+    int64_t poll_elapsed_ms = (d->clock.now_us(d->clock.ctx) - poll_start) / 1000;
 
     if (pr == DENON_TRANSPORT_POLL_LOST) {
         dispatch_link_lost(d, s);
@@ -150,4 +160,6 @@ void denon_service_io_tick(svc_denon_t *d)
         ESP_LOGI(TAG, "recv: %s", line);
         handle_line(d, line);
     }
+
+    return poll_elapsed_ms >= (DENON_IO_POLL_TIMEOUT_MS / 2);
 }

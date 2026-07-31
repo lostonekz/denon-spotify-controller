@@ -66,7 +66,7 @@ costs a field failure nobody can reproduce. The trade is not close.
 |---|---|---|
 | `svc_spotify` | **restartable** | owns one TLS session + one timer; teardown closes both, no shared state |
 | `svc_denon` | **restartable** | owns one socket + one queue; teardown drains and closes |
-| `svc_artwork` | **restartable** | already has `suspend`/`resume` for OTA; pool slots are refcounted |
+| `svc_artwork` | **restartable** | already has `suspend`/`resume` for OTA; pool slots are generation-tagged, single-owner (not refcounted — see `artwork_cache.h`'s ownership contract) |
 | `svc_ota` | task is transient | created and destroyed per update by design |
 | `net_wifi` | **reboot** | netif/LWIP teardown is not reliably complete in ESP-IDF |
 | `svc_storage` | **reboot** | NVS handle loss is unrecoverable in place |

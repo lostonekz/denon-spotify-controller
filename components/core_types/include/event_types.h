@@ -39,6 +39,7 @@ typedef enum {
     TOPIC_OTA,
     TOPIC_TOAST,
     TOPIC_DIAG,
+    TOPIC_INTENT_ACK,
     TOPIC_COUNT,             /* not a real topic -- array-sizing sentinel */
 } event_topic_t;
 
@@ -187,6 +188,29 @@ typedef struct {
     uint32_t fault_id;
 } diag_evt_t;
 
+/* --- TOPIC_INTENT_ACK: mechanism 2 (EVENTS_AND_STATE.md §5.1) -- what the
+ * view model's pending state (§6.3) reconciles a pending intent against.
+ * Domain-neutral (one topic, not one per domain): `seq` is already globally
+ * unique across every intent regardless of target domain, so a per-domain
+ * copy of this same 8-byte shape would just be duplication. Phase 4
+ * (svc_spotify) is the first real publisher -- Denon's ~20ms telnet round
+ * trip never needed optimistic-UI reconciliation, so svc_denon does not
+ * publish here. SUPERSEDED completes the vocabulary but has no real
+ * producer yet (Phase 4's playback-intent queue has no coalescing, so
+ * nothing supersedes anything) -- same treatment as denon_link_fsm's own
+ * dead SLEEP_ENTER/WAKE pair, kept to avoid rework once a real coalescing
+ * UI exists. */
+typedef enum {
+    INTENT_ACK_EVT_ACCEPTED = 0,
+    INTENT_ACK_EVT_REJECTED,
+    INTENT_ACK_EVT_SUPERSEDED,
+} intent_ack_evt_kind_t;
+
+typedef struct {
+    uint32_t              seq;   /* the originating intent's seq */
+    intent_ack_evt_kind_t kind;
+} intent_ack_evt_t;
+
 typedef struct {
     event_topic_t topic;
     uint32_t      seq;
@@ -203,6 +227,7 @@ typedef struct {
         ota_evt_t      ota;
         toast_evt_t    toast;
         diag_evt_t     diag;
+        intent_ack_evt_t intent_ack;
     } u;
 } event_t;
 

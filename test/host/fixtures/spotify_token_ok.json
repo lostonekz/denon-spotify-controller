@@ -1,0 +1,7 @@
+{
+  "access_token": "BQD4exampleaccesstoken1234567890abcdefg",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "AQD3examplerefreshtoken0987654321zyxwvut",
+  "scope": "user-read-playback-state user-modify-playback-state"
+}

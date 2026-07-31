@@ -114,6 +114,16 @@ ota_admit_t ota_policy_admit_image(const ota_manifest_t *m,
 
 const char *ota_admit_str(ota_admit_t a);
 
+/*
+ * Tier -1 fix: called by the download loop BEFORE writing/hashing each
+ * chunk, not after -- checking post-write still lets a corrupted or
+ * mismatched image write up to one full chunk past the manifest's declared
+ * size (needless flash wear, and a misleading progress-percent overflow).
+ * Pure so the boundary math gets a real host test despite living inside a
+ * target-only download loop (real esp_ota_write()/esp_partition calls).
+ */
+bool ota_download_would_overflow(uint32_t total_so_far, int chunk_len, uint32_t image_size);
+
 #ifdef __cplusplus
 }
 #endif

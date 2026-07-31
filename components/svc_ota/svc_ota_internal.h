@@ -20,7 +20,7 @@ extern "C" {
 #define OTA_KV_KEY_HEAP_WM     "heap_wm"
 
 uint32_t svc_ota_kv_get_u32(kv_store_if_t *kv, const char *key, uint32_t default_value);
-void svc_ota_kv_set_u32(kv_store_if_t *kv, const char *key, uint32_t v);
+bool svc_ota_kv_set_u32(kv_store_if_t *kv, const char *key, uint32_t v);
 
 /* Posted by the transient "ota" task (svc_ota_download.c) into
  * svc_ota_t.result_queue; drained only by svc_ota_tick() -- see svc_ota.h's

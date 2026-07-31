@@ -225,7 +225,7 @@ Core 1 belongs to the UI. Core 0 hosts WiFi and every network service.
 | `lvgl_tick` | — | — | — | `esp_timer`, 2 ms | ISR context |
 | `net_sup` | 0 | 6 | 4 KB | event-driven | yes |
 | `denon` | 0 | 5 | 6 KB | socket select + cmd queue | yes |
-| `spotify` | 0 | 5 | 8 KB | adaptive 1–30 s | yes |
+| `spotify` | 0 | 5 | 12 KB | adaptive 1–30 s | yes |
 | `artwork` | 0 | 3 | 6 KB | on track change | yes (long) |
 | `sched` | 0 | 2 | 4 KB | periodic jobs | yes |
 | `ota` | 0 | 3 | 8 KB | created on demand, destroyed after | yes |

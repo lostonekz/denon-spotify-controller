@@ -55,19 +55,13 @@ typedef struct {
     uint8_t         payload[INTENT_PAYLOAD_MAX];
 } intent_t;
 
-/* Mechanism 2, acknowledgements (§5.1): what the view model's pending state
- * (§6.3) reconciles against, and why a pending intent can be abandoned
- * deterministically rather than on a timeout alone. */
-typedef enum {
-    INTENT_ACK_ACCEPTED = 0,
-    INTENT_ACK_REJECTED,
-    INTENT_ACK_SUPERSEDED,
-} intent_ack_kind_t;
-
-typedef struct {
-    uint32_t          seq;      /* the originating intent's seq */
-    intent_ack_kind_t kind;
-} intent_ack_t;
+/* Mechanism 2, acknowledgements (§5.1), is defined in event_types.h as
+ * TOPIC_INTENT_ACK/intent_ack_evt_t, not here: this Phase 1 scaffold was
+ * never wired to any real transport (no topic, no event_t union member),
+ * and event_types.h cannot be made to include this file to reuse it --
+ * app_state_types.h already includes event_types.h (for artwork_handle_t),
+ * and this file includes app_state_types.h, so the reverse include would be
+ * circular. Phase 4 (svc_spotify) is the first real producer. */
 
 #ifdef __cplusplus
 }

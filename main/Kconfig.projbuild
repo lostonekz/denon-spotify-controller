@@ -72,4 +72,95 @@ config DSC_DENON_SELFTEST
         enabled in a shipping build -- tools/check_release.py fails a
         production profile that has this set, same as DSC_FACTORY_TEST.
 
+config DSC_SPOTIFY_CLIENT_ID
+    string "Spotify app client_id (dev convenience default)"
+    default ""
+    help
+        Not confidential under PKCE (no client_secret involved), unlike
+        wifi.psk, which never gets a Kconfig-baked default. Read once by
+        app_wiring and used to seed the secure NVS namespace ONLY if
+        nothing is already stored there -- `spotify client-id <id>`
+        overrides at runtime regardless of this default.
+
+config DSC_SPOTIFY_REDIRECT_URI
+    string "Spotify app redirect_uri (dev convenience default)"
+    default ""
+    help
+        A loopback address (http://127.0.0.1:<port>/callback) per this
+        project's Phase 4 plan -- registering an arbitrary HTTPS domain
+        risks a real third party seeing the OAuth code in transit; a
+        loopback address never leaves the user's own machine even as an
+        attempted connection. Same seed-only-if-empty treatment as
+        DSC_SPOTIFY_CLIENT_ID; `spotify redirect-uri <uri>` overrides at
+        runtime.
+
+config DSC_SPOTIFY_DEBUG_CONSOLE
+    bool "Register the `spotify` UART debug console command family (dev convenience)"
+    default n
+    help
+        Same esp_console REPL Phase 3's DSC_DENON_DEBUG_CONSOLE started --
+        this flag independently gates registering the `spotify` command
+        set (pair|code|unpair|client-id|redirect-uri|devices|
+        set-avr-device|clear-avr-device|status|play|pause|next|prev|
+        shuffle|repeat|volume) alongside it. Not a production feature --
+        tools/check_release.py fails a production profile that has this
+        set, same as DSC_DENON_DEBUG_CONSOLE.
+
+config DSC_SPOTIFY_AUTOPAIR
+    bool "Run scripted Spotify pairing after boot using Kconfig-seeded values (test only)"
+    default n
+    help
+        Same reasoning as DSC_DENON_SELFTEST: scripting interactive console
+        input over this board's native USB-CDC port proved unreliable from
+        Windows. When enabled, and no refresh token is already stored, the
+        device automatically begins pairing at boot (equivalent to `spotify
+        pair`) and logs the authorize URL -- read-only over UART, no typing
+        needed. If DSC_SPOTIFY_AUTOPAIR_CODE is also set, its value is
+        submitted automatically (equivalent to `spotify code <url>`), so a
+        second flash with that value filled in completes pairing with zero
+        live console interaction. Must never be enabled in a shipping
+        build -- tools/check_release.py fails a production profile that has
+        this set, same as DSC_DENON_SELFTEST.
+
+config DSC_SPOTIFY_AUTOPAIR_CODE
+    string "Pasted OAuth callback URL for DSC_SPOTIFY_AUTOPAIR (test only)"
+    default ""
+    depends on DSC_SPOTIFY_AUTOPAIR
+    help
+        The full address-bar URL copied after approving access on Spotify's
+        consent screen (contains ?code=...&state=...). Left empty on the
+        first flash (which only prints the authorize URL); filled in and
+        reflashed once you have it.
+
+config DSC_SPOTIFY_AUTOPAIR_VERIFIER
+    string "Fixed PKCE code_verifier for DSC_SPOTIFY_AUTOPAIR (test only)"
+    default "9z0VM7MCOfJi5yCMfSlEq6xrgrj3T3zwo2diJK0eSfo"
+    depends on DSC_SPOTIFY_AUTOPAIR
+    help
+        svc_spotify_begin_pair() normally generates a fresh, random PKCE
+        verifier/state on every call -- fine for the interactive `spotify
+        pair` console command, which stays running between generating the
+        URL and receiving the code, but DSC_SPOTIFY_AUTOPAIR's whole reason
+        for existing is that live console interaction over this board's
+        native USB-CDC port is unreliable, forcing a two-boot flow (print
+        URL, reflash with the code). A fresh random verifier/state on the
+        second boot would never match what the first boot's URL was built
+        from. Fixing the verifier/state as source-level constants instead
+        means both boots derive the identical code_challenge/state, with no
+        dependency on anything (NVS, a live write) surviving the reflash in
+        between. The default here is a real, validly-formatted (43-char
+        base64url, RFC 7636 §4.1) example value, not a placeholder -- safe
+        to use as-is since it only ever pairs with this device's own
+        client_id/redirect_uri, both already under your control.
+
+config DSC_SPOTIFY_AUTOPAIR_STATE
+    string "Fixed OAuth state nonce for DSC_SPOTIFY_AUTOPAIR (test only)"
+    default "1ac76f466aa55c6949a2f18afd13f8b5"
+    depends on DSC_SPOTIFY_AUTOPAIR
+    help
+        Pairs with DSC_SPOTIFY_AUTOPAIR_VERIFIER above -- same reasoning,
+        same fixed-across-both-boots requirement. A real, validly-formatted
+        (32 hex chars, matching spotify_auth.c's own random_hex(..., 16))
+        example value, not a placeholder.
+
 endmenu

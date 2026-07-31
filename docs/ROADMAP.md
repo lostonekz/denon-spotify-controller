@@ -134,6 +134,13 @@ reproduced against this specific unit/firmware.
 ## Phase 4 — Spotify service and artwork
 
 - `spotify_auth.c`: PKCE, QR handoff, rotated-token persistence
+
+  **Implemented instead as a manual code paste over the UART debug console** (`spotify pair`
+  prints the authorize URL; `spotify code <redirect_url>` parses the pasted callback URL and
+  validates `state` before any exchange) — a deliberate deviation, same reasoning Phase 3
+  gave for its own UART debug console: no `hal_display`/LVGL bring-up exists yet (Phase 5
+  scope) to render a QR code against. See
+  [adr/0009](adr/0009-manual-code-paste-over-bounce-page.md).
 - `spotify_api.c`, `spotify_parse.c` (fixture-driven host tests), `spotify_poll_policy.c`
 - `svc_artwork`: fetch, ½-scale decode, slot pool with generation handles, palette
   extraction
@@ -183,7 +190,7 @@ interpolated progress, marquee, stale-state treatment.
 | WiFi AP powered off mid-playback | `DEGRADED`, stale content retained, auto-reconnect |
 | AVR rebooted | link re-established, state re-synced, no stuck UI |
 | Telnet socket stolen by another client | falls back to HTTP, promotes back within 60 s |
-| Spotify token revoked | `REAUTH_REQUIRED` + on-screen QR, no crash, no rollback |
+| Spotify token revoked | `REAUTH_REQUIRED` reported (`spotify status` until Phase 6 has a screen), re-pair via `spotify pair`/`spotify code`, no crash, no rollback |
 | Spotify returns 429 sustained | backoff honoured, UI stays responsive |
 | SPIFFS corrupted | erased and rebuilt, artwork re-fetched |
 | Power cut mid-NVS-write | settings intact or defaulted, never garbage |

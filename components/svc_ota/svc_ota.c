@@ -70,10 +70,15 @@ uint32_t svc_ota_kv_get_u32(kv_store_if_t *kv, const char *key, uint32_t default
     return default_value;
 }
 
-void svc_ota_kv_set_u32(kv_store_if_t *kv, const char *key, uint32_t v)
+bool svc_ota_kv_set_u32(kv_store_if_t *kv, const char *key, uint32_t v)
 {
-    kv->set_blob(kv->ctx, key, &v, sizeof(v));
-    kv->commit(kv->ctx);
+    /* Tier -1 fix: both return values were previously discarded -- for the
+     * anti-rollback floor (OTA_KV_KEY_SEC_VER_MAX), a silently-failed
+     * persist here is exactly the failure mode R15 exists to prevent. See
+     * svc_ota_apply.c's caller. */
+    bool ok = kv->set_blob(kv->ctx, key, &v, sizeof(v));
+    ok = kv->commit(kv->ctx) && ok;
+    return ok;
 }
 
 bool svc_ota_create(svc_ota_t *o, const svc_ota_cfg_t *cfg)

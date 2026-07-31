@@ -259,17 +259,30 @@ and high-water mark to `svc_diagnostics`.
 | Artwork slots | 3 × 200 KiB + 3 × 7 KiB | `svc_artwork` |
 | JPEG staging | 1 × 96 KiB | `svc_artwork` |
 | HTTP response buffers | 2 × 16 KiB | `net_http` |
-| **JSON parse scratch** | 2 × 8 KiB | `net_http` |
+| **JSON parse scratch** | cJSON, general heap per parse call (see note below) | `svc_spotify` |
 | String scratch (formatting) | 8 × 128 B | `ui` |
 | Log ring | 8 KiB | `svc_logging` |
 | Coredump summary staging | 1 × 2 KiB | `svc_diagnostics` |
 
-**JSON parsing strategy**, since it is otherwise a hidden heap consumer. A `/v1/me/player`
-response is ~4–8 KB and only ~12 fields are needed. We do **not** build a DOM: a streaming
-pull parser reads directly from the HTTP response into `core_types` structs, so peak memory
-is one 8 KiB scratch block rather than a parsed tree several times the payload size. No
-`cJSON`, no allocation per node. This also bounds the damage from a malformed or unexpectedly
-large response — the parser has a hard input ceiling and fails cleanly past it.
+**JSON parsing strategy**, since it is otherwise a hidden heap consumer — revised from an
+earlier draft of this document, which described a streaming pull parser with no `cJSON` and
+no per-node allocation. Phase 4 (`svc_spotify`) uses `cJSON` (ESP-IDF's built-in `json`
+component) instead: a `/v1/me/player` response is a large, evolving, third-party JSON blob
+where [RISKS.md](RISKS.md) R5 wants tolerance to unknown/additive fields, not a closed schema
+a hand-rolled parser could reject strictly against — the opposite trade `svc_ota`'s manifest
+parser makes, and for the opposite reason. See
+[adr/0010](adr/0010-cjson-over-hand-rolled-parser.md).
+
+`spotify_parse.c` is the *only* file that ever builds a cJSON tree: it parses one response,
+extracts fields by key into `core_types` structs, and frees the tree before returning — peak
+heap is bounded to one parse call's lifetime, never retained across calls or shared with
+anything else. This does **not** offer the streaming parser's hard input-ceiling protection
+against a malformed or oversized response; `net_http_get()`'s own truncate-not-error contract
+(a fixed response buffer cap) is what bounds the input `spotify_parse.c` ever sees.
+
+A real measured peak-heap number for a `/v1/me/player` response is **pending Tier 6**
+hardware verification (needs a live Spotify account) — intentionally not filled in with a
+placeholder here.
 
 If a pool ever runs dry, that is a **design error, not a runtime condition**: the allocation
 fails, the failure is counted and logged, and the caller degrades visibly. We never block

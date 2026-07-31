@@ -16,6 +16,6 @@ dependencies:
 direct_dependencies:
 - espressif/esp_jpeg
 - idf
-manifest_hash: fd5a26d08d999375805e1d685a98db32fdc5d5c98611be1c3c6978afc7e9d5c0
+manifest_hash: b204249f584ba9a563aadd8db92b789fedfddb0dc08fea4b07726ae29a8ec12f
 target: esp32s3
 version: 2.0.0

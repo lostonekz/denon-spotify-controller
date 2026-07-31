@@ -13,6 +13,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 
+#include "artwork_service.h"
 #include "core_eventbus.h"
 #include "core_state.h"
 #include "denon_service.h"
@@ -22,6 +23,7 @@
 #include "net_http.h"
 #include "net_time.h"
 #include "net_wifi.h"
+#include "spotify_service.h"
 #include "svc_diagnostics.h"
 #include "svc_logging.h"
 #include "svc_ota.h"
@@ -35,17 +37,22 @@
  * net_time on TOPIC_NET); Phase 3 adds 1 (app_wiring on TOPIC_SETTINGS, to
  * relay denon_host/denon_transport_pref/volume_step/volume_limit_max into
  * svc_denon -- svc_denon cannot call svc_settings itself, no svc->svc edge).
- * Not a hard architectural limit, raise it when a real subscriber needs
- * more room. */
-#define APP_EVENTBUS_MAX_SUBS       12
+ * Phase 4 adds 2 more: svc_artwork's own TOPIC_PLAYBACK subscription (legal
+ * svc->core edge, no mediation needed -- see EVENTS_AND_STATE.md's artwork
+ * ownership contract) and app_wiring's TOPIC_OTA subscription for the
+ * OTA<->artwork coexistence relay. Not a hard architectural limit, raise it
+ * when a real subscriber needs more room. */
+#define APP_EVENTBUS_MAX_SUBS       14
 /* TOPIC_SETTINGS/TOPIC_DIAG (Phase 1) + TOPIC_NET/TOPIC_TIME/TOPIC_OTA
- * (Phase 2) + TOPIC_DENON (Phase 3). */
-#define APP_EVENTBUS_TOPIC_POLICIES 6
+ * (Phase 2) + TOPIC_DENON (Phase 3) + TOPIC_PLAYBACK/TOPIC_SPOTIFY/
+ * TOPIC_ARTWORK/TOPIC_INTENT_ACK (Phase 4). */
+#define APP_EVENTBUS_TOPIC_POLICIES 10
 
 /* Every service that has a service_desc_t: Phase 1's storage/scheduler/
  * logging/settings/diagnostics (5) + Phase 2's net_wifi/net_time/net_http/
- * svc_ota (4) + Phase 3's svc_denon (1). Grows as later phases add services. */
-#define APP_SUPERVISOR_MAX_SERVICES 10
+ * svc_ota (4) + Phase 3's svc_denon (1) + Phase 4's svc_spotify/svc_artwork
+ * (2). Grows as later phases add services. */
+#define APP_SUPERVISOR_MAX_SERVICES 12
 
 /* EVENTS_AND_STATE.md §5.3's documented (but, until Phase 3, unbuilt)
  * TOPIC_INTENT policy: depth 16, drop newest + count it. intent_t does not
@@ -106,6 +113,23 @@ typedef struct {
     eventbus_sub_h       denon_settings_sub;   /* TOPIC_SETTINGS, relayed into svc_denon */
     event_t                denon_settings_sub_storage[4];
     scheduler_job_h           denon_settings_relay_tick_job;
+
+    /* --- spotify (Phase 4): no svc_settings dependency -- PLATFORM.md
+     * §3.4, auth lives entirely in the secure namespace, not a typed
+     * setting. --- */
+    svc_spotify_t          svc_spotify;
+    svc_spotify_restart_ctx_t svc_spotify_restart_ctx;
+
+    /* --- artwork (Phase 4): owns its own TOPIC_PLAYBACK subscription
+     * directly (svc_artwork_t's own eventbus_sub_h/storage, not app_ctx_t's
+     * -- see artwork_service.h) -- app_ctx_t only needs the OTA-coexistence
+     * relay's subscription below. --- */
+    svc_artwork_t          svc_artwork;
+    svc_artwork_restart_ctx_t svc_artwork_restart_ctx;
+    eventbus_sub_h       ota_artwork_relay_sub;   /* TOPIC_OTA, relayed into svc_artwork suspend/resume */
+    event_t                ota_artwork_relay_sub_storage[4];
+    scheduler_job_h           ota_artwork_relay_tick_job;
+    bool                        artwork_suspended_for_ota;
 
     /* --- lifecycle --- */
     service_desc_t       service_descs[APP_SUPERVISOR_MAX_SERVICES];

@@ -16,6 +16,8 @@ engineer joining the project would otherwise be tempted to "fix" it.
 | [0006](0006-staged-security.md) | Staged security: build it now, enable it in stages | Accepted |
 | [0007](0007-denon-volume-is-primary.md) | Denon master volume is the primary volume control | Accepted |
 | [0008](0008-own-the-lvgl-glue.md) | Own the LVGL/task glue; no `esp_lvgl_port` | Accepted |
+| [0009](0009-manual-code-paste-over-bounce-page.md) | Manual code paste over a bounce-page for Spotify OAuth | Accepted |
+| [0010](0010-cjson-over-hand-rolled-parser.md) | cJSON over a hand-rolled parser for Spotify responses | Accepted |
 
 ## Template
 

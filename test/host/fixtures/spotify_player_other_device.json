@@ -1,0 +1,30 @@
+{
+  "device": {
+    "id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+    "is_active": true,
+    "is_restricted": false,
+    "name": "Gabriel's Phone",
+    "type": "Smartphone",
+    "volume_percent": 70,
+    "supports_volume": true
+  },
+  "shuffle_state": true,
+  "repeat_state": "context",
+  "progress_ms": 10500,
+  "is_playing": true,
+  "item": {
+    "id": "0VjIjW4GlUZAMYd2vXMi3b",
+    "name": "Blinding Lights",
+    "duration_ms": 200040,
+    "artists": [
+      { "name": "The Weeknd" }
+    ],
+    "album": {
+      "name": "After Hours",
+      "images": [
+        { "url": "https://i.scdn.co/image/ab67616d0000b273afterhours640", "height": 640, "width": 640 },
+        { "url": "https://i.scdn.co/image/ab67616d00001e02afterhours300", "height": 300, "width": 300 }
+      ]
+    }
+  }
+}

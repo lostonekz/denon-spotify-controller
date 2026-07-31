@@ -41,8 +41,12 @@ PROD_REQUIRED = [
      "test-only gate-timeout override must not ship"),
     ("CONFIG_DSC_DENON_DEBUG_CONSOLE", None,
      "debug console must not ship"),
+    ("CONFIG_DSC_SPOTIFY_DEBUG_CONSOLE", None,
+     "debug console must not ship"),
     ("CONFIG_DSC_DENON_SELFTEST", None,
      "boot-time self-test must not ship"),
+    ("CONFIG_DSC_SPOTIFY_AUTOPAIR", None,
+     "boot-time autopair must not ship"),
     ("CONFIG_ESP_CONSOLE_UART_DEFAULT", None,
      "no serial console on a shipping unit"),
 ]

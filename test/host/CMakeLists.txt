@@ -299,3 +299,126 @@ target_include_directories(test_ota_fsm PRIVATE
     "${REPO_ROOT}/components/svc_ota/include"
     "${REPO_ROOT}/components/core_fsm/include"
     "${CMAKE_CURRENT_LIST_DIR}")
+
+# --- Phase 4: svc_spotify / svc_artwork / main's volume coordinator -------
+
+dsc_add_host_test(test_spotify_credentials
+    test_spotify_credentials.c
+    fake_kv_store.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_credentials.c")
+target_include_directories(test_spotify_credentials PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_pkce_encode
+    test_spotify_pkce_encode.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_pkce_encode.c")
+target_include_directories(test_spotify_pkce_encode PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_authorize_url
+    test_spotify_authorize_url.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_authorize_url.c")
+target_include_directories(test_spotify_authorize_url PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_reauth_watch
+    test_spotify_reauth_watch.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_reauth_watch.c")
+target_include_directories(test_spotify_reauth_watch PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_avr_match
+    test_spotify_avr_match.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_avr_match.c")
+target_include_directories(test_spotify_avr_match PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_intent
+    test_spotify_intent.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_intent.c")
+target_include_directories(test_spotify_intent PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_session_fsm
+    test_spotify_session_fsm.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_session_fsm.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_spotify_session_fsm PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_fsm/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_service_state
+    test_spotify_service_state.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_service_state.c"
+    "${REPO_ROOT}/components/svc_spotify/spotify_session_fsm.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_spotify_service_state PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${REPO_ROOT}/components/core_fsm/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_poll_policy
+    test_spotify_poll_policy.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_poll_policy.c")
+target_include_directories(test_spotify_poll_policy PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_spotify_progress
+    test_spotify_progress.c
+    fake_time_source.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_progress.c")
+target_include_directories(test_spotify_progress PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+# cJSON is ESP-IDF's own built-in `json` component -- vendored on disk in
+# every ESP-IDF install already, no network fetch needed here. $ENV{IDF_PATH}
+# must be set (export.ps1/export.sh sourced) to configure this target.
+# TO_CMAKE_PATH: IDF_PATH is backslash-separated on Windows, which CMake's
+# string parser can misread as escape sequences (e.g. "...\esp-idf..." ->
+# "\e") when substituted raw into a quoted argument.
+if(NOT DEFINED ENV{IDF_PATH})
+    message(FATAL_ERROR "IDF_PATH is not set -- source ESP-IDF's export script first (test_spotify_parse needs cJSON from the IDF tree)")
+endif()
+file(TO_CMAKE_PATH "$ENV{IDF_PATH}" IDF_PATH_CMAKE)
+dsc_add_host_test(test_spotify_parse
+    test_spotify_parse.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_parse.c"
+    "${IDF_PATH_CMAKE}/components/json/cJSON/cJSON.c")
+target_include_directories(test_spotify_parse PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${IDF_PATH_CMAKE}/components/json/cJSON"
+    "${CMAKE_CURRENT_LIST_DIR}")
+target_compile_definitions(test_spotify_parse PRIVATE
+    "FIXTURES_DIR=\"${CMAKE_CURRENT_LIST_DIR}/fixtures\"")
+
+dsc_add_host_test(test_artwork_palette
+    test_artwork_palette.c
+    "${REPO_ROOT}/components/svc_artwork/artwork_palette.c")
+target_include_directories(test_artwork_palette PRIVATE
+    "${REPO_ROOT}/components/svc_artwork/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_libraries(test_artwork_palette PRIVATE m)
+endif()
+
+dsc_add_host_test(test_volume_coordinator
+    test_volume_coordinator.c
+    "${REPO_ROOT}/main/volume_coordinator.c")
+target_include_directories(test_volume_coordinator PRIVATE
+    "${REPO_ROOT}/main"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")

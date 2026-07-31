@@ -149,18 +149,34 @@ RISKS R14 (single-developer bus factor). Rotation support is the actual answer:
 
 ## 5. Setup-session hardening
 
-The provisioning and OAuth flow ([NETWORKING.md §1.2](NETWORKING.md)) is the one moment the
-device deliberately opens a listener. It is hardened regardless of profile:
+The WiFi provisioning stage ([NETWORKING.md §1.2](NETWORKING.md)) is the one moment the
+device deliberately opens a listener. The Spotify OAuth stage opens **no** listener at all —
+revised from an earlier draft of this document, which had OAuth running its own local HTTP
+callback receiver; see below and
+[adr/0009](adr/0009-manual-code-paste-over-bounce-page.md).
 
 - **SoftAP stage** — WPA2 with a per-device password derived from the MAC and shown on
   screen. Not an open AP. The portal is reachable only while provisioning is active.
-- **OAuth stage** — the local HTTP listener binds only for the pairing window, times out
-  after **5 minutes**, and closes on first successful exchange.
-- **CSRF** — the OAuth `state` parameter is a 128-bit random value generated per attempt,
-  compared on the callback, and single-use. PKCE `code_verifier` likewise.
-- **Pairing PIN** — the on-screen QR embeds a nonce the device also displays; the callback
-  is rejected without it. Prevents another host on the LAN racing the redirect.
-- **No listener outside pairing.** The device runs no inbound service in normal operation.
+- **OAuth stage — no listener, by design.** The `redirect_uri` registered with Spotify is a
+  loopback address (`http://127.0.0.1:<port>/callback`) that nothing on the device listens
+  on. The callback is captured by the user manually pasting the browser's resulting
+  address-bar URL into the UART debug console (`spotify code <url>`,
+  [NETWORKING.md §1.2/§1.3](NETWORKING.md)). This removes an entire threat class an
+  on-device listener would otherwise carry: there is no window where another host on the LAN
+  could race the redirect, because there is no socket to race. In exchange, this requires
+  physical/USB access to the device — a strictly stronger boundary than "same WiFi network,"
+  which is all the withdrawn listener design would have required of an attacker.
+- **CSRF** — the OAuth `state` parameter is a 128-bit-class random value generated per
+  `spotify pair` attempt, held in RAM only, and validated against the pasted callback URL by
+  `spotify code` before any PKCE exchange is attempted — a mismatch is rejected outright, no
+  exchange attempted, and the nonce is cleared on success/failure/unpair. PKCE
+  `code_verifier` likewise never leaves the device.
+- **No listener outside WiFi provisioning.** The device runs no inbound service in normal
+  operation, including during Spotify pairing.
+
+**Flagged for a human read before this ships**: this section describes a real change to the
+device's threat surface (trading a removed listener for a physical/USB-access requirement),
+not just a wording fix — it deserves a deliberate second look, not only an automated one.
 
 ---
 

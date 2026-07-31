@@ -68,47 +68,56 @@ device has a dynamic LAN IP and no public DNS name, so the obvious approaches al
 |---|---|
 | `http://<device-lan-ip>/callback` | not registrable — IP changes; plain http rejected |
 | `http://denon-controller.local/cb` | mDNS name is fine on the LAN, but Spotify rejects non-loopback http |
-| `http://127.0.0.1:PORT/callback` | loopback resolves to **the phone**, not the device |
+| A bounce page on a domain we control | a real, resolving domain is something a third party could genuinely receive the code through in transit |
 | RFC 8628 device authorization flow | Spotify does not implement it |
 
-**Decision: a static HTTPS bounce page on the same host that already serves OTA manifests.**
+**Decision: register a loopback redirect_uri and paste the callback URL manually, over the
+UART debug console — revised from an earlier draft of this document, which described a
+bounce-page design instead.** `http://127.0.0.1:<port>/callback` is registered once with
+Spotify; nothing needs to actually listen on that port — the redirect only ever needs to
+reach the browser's own address bar, never a live server.
 
 ```
-device                phone browser              Spotify            bounce page
-  │  QR: authorize URL     │                        │                     │
-  │  state = nonce|lan_ip  │                        │                     │
-  ├───────────────────────►│                        │                     │
-  │                        ├───────authorize───────►│                     │
-  │                        │◄──302 code+state───────┤                     │
-  │                        ├────────────────────────┼────────────────────►│
-  │                        │◄──302 to http://<lan_ip>:PORT/cb?code&state──┤
-  │◄──GET /cb?code&state───┤                        │                     │
-  │  verify nonce, PKCE exchange over TLS           │                     │
+device (console)         any browser                Spotify
+  │  `spotify pair` prints    │                          │
+  │  the authorize URL        │                          │
+  │  (state = nonce)          │                          │
+  ├───────────────────────────►                          │
+  │                           ├────────authorize────────►│
+  │                           │◄──302 to http://127.0.0.1:PORT/cb?code&state
+  │                           │  (connection fails -- nothing is listening,
+  │                           │   but the address bar keeps the full URL)
+  │  user pastes that URL into `spotify code <url>`       │
+  │  device parses code/state, validates state, PKCE exchange over TLS
 ```
 
-- `https://ota.example.com/spotify-callback` is registered once with Spotify. It is a
-  **static page** — no server logic, no state, just a few lines of JS that read `code` and
-  `state` from the query string and redirect the browser onward.
-- The device embeds its own LAN address in the `state` parameter it generates. `state`
-  already exists for CSRF (SECURITY.md §5), so this adds no new mechanism — and the device
-  validates the nonce on return, so a tampered `state` is rejected.
-- **The code transiting the bounce page is safe by construction.** This is PKCE: the
-  authorization code is useless without the `code_verifier`, which never leaves the device.
-  The bounce page never sees a token and never needs to be trusted.
-- Reuses infrastructure we already need for OTA. No server to operate, no per-device
-  registration, no dynamic DNS.
+- `spotify pair` generates the PKCE `code_verifier`/`code_challenge` and a `state` nonce
+  (RAM only), and prints the authorize URL for the user to open in **any** browser, on any
+  device — it does not need to be on the device's LAN at all, since no bounce page or
+  on-device listener is in the loop.
+- The user copies the full address-bar URL after Spotify's redirect (even though the page
+  itself fails to load) and pastes it into `spotify code <url>`, which parses `code`/`state`
+  as query parameters and validates `state` against the nonce `spotify pair` generated —
+  rejecting a mismatch outright, no exchange attempted.
+- **The code is safe by construction, same as the withdrawn bounce-page design.** This is
+  PKCE: the authorization code is useless without the `code_verifier`, which never leaves
+  the device. Unlike a bounce page, there is no third party in the loop at all — the code
+  never transits anything but Spotify and the user's own browser.
 
-Fallback if the bounce host is unreachable: Settings offers manual entry of a code the user
-copies from the browser. Ugly, but it means a hosting outage cannot permanently block setup.
+**This is not a straight downgrade.** Removing the on-device HTTP listener a bounce-page
+design would have needed removes an entire threat class (another host on the LAN racing the
+redirect), and the console requires physical/USB access — a strictly stronger boundary than
+"same WiFi network." See
+[adr/0009](adr/0009-manual-code-paste-over-bounce-page.md) for the full reasoning, including
+why a loopback address was chosen over registering an arbitrary HTTPS domain.
 
-The phone must be on the same LAN as the device for the final hop. This is checked before
-showing the QR, and the failure is explained on screen rather than silently timing out.
-
-**Consequence:** setup is two passes, not one. That is inherent to the constraint, not a
-design choice — and the honest version is a QR code and a "Connect Spotify" step the user
-can also skip and do later from Settings. A device that works as a Denon controller
-immediately, with Spotify added afterwards, is a better first-run experience than one that
-blocks on a cloud account.
+**Consequence:** setup is still two passes, not one — WiFi first (Stage 1), Spotify paired
+afterwards from the console (Stage 2), inherent to the constraint in §1.2's own split above,
+not a design choice. A device that works as a Denon controller immediately, with Spotify
+paired afterwards, is a better first-run experience than one that blocks on a cloud account.
+The manual-paste step is cruder than a QR handoff would have been — a deliberate trade
+against building a bounce page or an on-device listener for a phase that has no on-screen UI
+to render a QR code on anyway (no `hal_display`/LVGL until Phase 5).
 
 ### 1.3 Spotify
 
@@ -120,18 +129,22 @@ that constraint rather than pretending otherwise.
 Client Credentials cannot access user playback, so PKCE is the only viable flow for a
 device with no secret storage guarantee.
 
-- Setup: device generates `code_verifier`, displays a **QR code** encoding the authorize
-  URL with `redirect_uri` pointing at the device's own LAN address. The user authorises on
-  their phone; the phone's browser redirects to the device; a tiny local HTTP listener
-  captures the code and exchanges it.
+- Setup: `spotify pair` (the UART debug console, §1.2 above) generates `code_verifier`/
+  `code_challenge`/`state` and prints the authorize URL for the user to open in any browser.
+  Spotify redirects the browser to a registered loopback address
+  (`http://127.0.0.1:<port>/callback`) that nothing listens on — the connection fails, but
+  the address bar keeps the full URL. The user pastes that URL into `spotify code <url>`,
+  which validates `state` before attempting the PKCE exchange. No on-device HTTP listener,
+  no bounce page.
 - **Refresh tokens rotate.** Spotify's PKCE flow returns a *new* refresh token on many
   refreshes. Failing to persist it is the single most common way these integrations die
   after a few weeks. The token write is committed to NVS **before** the new access token is
   used, so a power cut mid-refresh cannot strand us.
 - Refresh proactively at 80 % of `expires_in`, not on 401.
 - Unrecoverable auth failure (revoked, password changed) → `spotify_session` FSM enters
-  `REAUTH_REQUIRED` → the UI shows a re-pair QR code on the Now Playing screen. Recoverable
-  without a factory reset.
+  `REAUTH_REQUIRED` → reported via `spotify status` on the UART console until Phase 6 gives
+  it an on-screen home; re-pairing is `spotify pair`/`spotify code` again, same as first
+  setup. Recoverable without a factory reset.
 
 **Polling policy** (`spotify_poll_policy.c`, pure and host-tested):
 

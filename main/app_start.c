@@ -11,6 +11,9 @@
 #ifdef CONFIG_DSC_DENON_SELFTEST
 #include "denon_selftest.h"
 #endif
+#ifdef CONFIG_DSC_SPOTIFY_AUTOPAIR
+#include "spotify_selftest.h"
+#endif
 
 static const char *TAG = "app_start";
 
@@ -35,6 +38,11 @@ void app_start(void)
          * only compiled in behind this flag -- see Kconfig.projbuild's
          * help text for why this exists instead of interactive testing. */
         denon_selftest_start(&g_ctx);
+#endif
+#ifdef CONFIG_DSC_SPOTIFY_AUTOPAIR
+        /* Phase 4 Tier 6: same reasoning as DSC_DENON_SELFTEST above --
+         * see Kconfig.projbuild's DSC_SPOTIFY_AUTOPAIR help text. */
+        spotify_selftest_start(&g_ctx);
 #endif
         return;
     }

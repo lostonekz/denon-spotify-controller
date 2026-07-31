@@ -259,9 +259,27 @@ static void test_malformed_manifest_rejected(void)
 
 /* --------------------------------------------------------------------- */
 
+/* Tier -1 fix: ota_download_would_overflow() is the pure predicate the
+ * download loop (svc_ota_download.c, target-only) now checks BEFORE
+ * esp_ota_write() for each chunk, so a corrupted/mismatched image aborts
+ * the instant it would exceed the manifest's declared size instead of
+ * writing the whole thing first. */
+static void test_download_overflow_predicate(void)
+{
+    TEST_ASSERT_FALSE(ota_download_would_overflow(0, 1024, 4096));
+    TEST_ASSERT_FALSE(ota_download_would_overflow(3072, 1024, 4096));   /* lands exactly on the boundary */
+    TEST_ASSERT_TRUE(ota_download_would_overflow(3072, 1025, 4096));    /* one byte past */
+    TEST_ASSERT_TRUE(ota_download_would_overflow(4096, 1, 4096));       /* already at the boundary */
+
+    /* Unknown size (0) or nothing to write -- nothing to bound against. */
+    TEST_ASSERT_FALSE(ota_download_would_overflow(0, 1024, 0));
+    TEST_ASSERT_FALSE(ota_download_would_overflow(1000, 0, 4096));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_download_overflow_predicate);
     RUN_TEST(test_good_manifest_admitted);
     RUN_TEST(test_unknown_key_rejected);
     RUN_TEST(test_bad_manifest_signature_rejected);

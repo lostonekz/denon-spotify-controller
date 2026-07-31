@@ -25,6 +25,10 @@
 #include "denon_codec_tables.h"
 #include "denon_intent.h"
 
+#ifdef CONFIG_DSC_SPOTIFY_DEBUG_CONSOLE
+#include "debug_console_spotify.h"
+#endif
+
 static const char *TAG = "debug_console";
 static app_ctx_t   *g_ctx;
 
@@ -244,6 +248,15 @@ bool debug_console_start(app_ctx_t *ctx)
         ESP_LOGE(TAG, "esp_console_cmd_register failed");
         return false;
     }
+
+#ifdef CONFIG_DSC_SPOTIFY_DEBUG_CONSOLE
+    /* Registers onto this same REPL, not a second one -- see
+     * debug_console_spotify.h's own top comment. */
+    if (!debug_console_spotify_register(ctx)) {
+        ESP_LOGE(TAG, "debug_console_spotify_register failed");
+        return false;
+    }
+#endif
 
     if (esp_console_start_repl(repl) != ESP_OK) {
         ESP_LOGE(TAG, "esp_console_start_repl failed");

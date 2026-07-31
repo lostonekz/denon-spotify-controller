@@ -7,12 +7,29 @@
 
 #include "denon_intent.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+/* Tier -1 fix: without this, the loop had no delay anywhere in its body.
+ * denon_service_io_tick() returns immediately (no blocking at all) whenever
+ * no transport is up (IDLE, DISCOVERING, CONNECTING states, BACKOFF states,
+ * RELEASED), and HTTP fallback's own poll() also returns immediately
+ * whenever its ~2s interval isn't yet due -- so the task spun at 100% CPU
+ * on core 0 for the full backoff window, and continuously while operating
+ * in HTTP fallback. A short bounded sleep whenever the tick did no real
+ * blocking work closes both cases without needing a real event-driven
+ * wake, which this bug doesn't warrant. */
+#define DENON_TASK_IDLE_DELAY_MS 50u
+
 void denon_service_task(void *pv)
 {
     svc_denon_t *d = (svc_denon_t *)pv;
     while (!d->task_should_stop) {
         denon_service_link_drive(d);
-        denon_service_io_tick(d);
+        bool blocked = denon_service_io_tick(d);
+        if (!blocked) {
+            vTaskDelay(pdMS_TO_TICKS(DENON_TASK_IDLE_DELAY_MS));
+        }
     }
     xSemaphoreGive(d->stopped_sem);
     vTaskDelete(NULL);
@@ -25,7 +42,8 @@ void svc_denon_teardown(void *handle)
     if (d->task_handle != NULL) {
         d->task_should_stop = true;
         /* Bounded by denon_service_task's own loop: at most one
-         * DENON_IO_POLL_TIMEOUT_MS (250ms) blocking call between checks
+         * DENON_IO_POLL_TIMEOUT_MS (250ms) blocking call plus one
+         * DENON_TASK_IDLE_DELAY_MS (50ms) idle sleep between checks
          * of task_should_stop. */
         xSemaphoreTake(d->stopped_sem, portMAX_DELAY);
         d->task_handle = NULL;

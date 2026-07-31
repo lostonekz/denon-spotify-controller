@@ -51,11 +51,12 @@ static ota_admit_t check_manifest(svc_ota_t *o, ota_manifest_full_t *full, ota_m
     char buf[OTA_MANIFEST_BUF_LEN];
     net_http_response_t resp = { 0 };
 
-    if (!net_http_tls_acquire(o->http, 1, o->http_policy.connect_timeout_ms)) {
-        return OTA_REJECT_MALFORMED_MANIFEST;   /* no TLS slot -- transport issue, no verdict to have */
-    }
+    /* net_http_get() acquires and releases its own TLS slot internally
+     * (net_http.c) -- an outer acquire/release here was redundant and burned
+     * both of the arbiter's 2 total slots for a 1KB manifest fetch (Tier -1
+     * fix: harmless when svc_ota was the arbiter's only caller, but directly
+     * contended once Spotify/artwork share it). */
     bool ok = net_http_get(o->http, o->manifest_url, &o->http_policy, buf, sizeof(buf), &resp);
-    net_http_tls_release(o->http, 1);
 
     if (ok) {
         o->tls_handshake_proven = true;   /* a real response, over TLS -- see svc_ota.h's comment */
@@ -138,6 +139,13 @@ static download_result_t download_image(svc_ota_t *o, const ota_manifest_full_t 
         }
         if (n == 0) {
             break;   /* EOF */
+        }
+        /* Tier -1 fix: bound BEFORE writing/hashing this chunk, not after --
+         * checking post-write still lets a corrupted/mismatched image write
+         * up to one full chunk past the declared size. */
+        if (ota_download_would_overflow(total, n, projected->image_size)) {
+            io_error = true;
+            break;
         }
         if (esp_ota_write(handle, chunk, (size_t)n) != ESP_OK) {
             io_error = true;

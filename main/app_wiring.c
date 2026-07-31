@@ -8,7 +8,10 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 
+#include "app_wiring_artwork.h"
+#include "app_wiring_core.h"
 #include "app_wiring_denon.h"
+#include "app_wiring_spotify.h"
 #include "app_wiring_ticks.h"
 #include "fw_version_generated.h"
 #include "ota_trust_anchor_dev.h"
@@ -48,6 +51,7 @@ static time_source_t real_clock(void)
 /* Frequent enough not to undercut Phase 3's own sub-100ms feedback goal --
  * docs/ROADMAP.md Phase 3's plan picked ~20-50ms; 20ms chosen here. */
 #define INTENT_DISPATCH_TICK_PERIOD_US ((int64_t)20 * 1000)
+#define OTA_ARTWORK_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
 
 /* docs/NETWORKING.md §1.6, verbatim -- "OTA...gets a different policy" is
  * not true yet in Phase 2 (only one real net_http caller exists), so this
@@ -102,42 +106,8 @@ bool app_wiring_create(app_ctx_t *ctx)
         ESP_LOGE(TAG, "bus lock create failed");
         return false;
     }
-    ctx->bus_topic_policies[0] = (topic_policy_t){
-        .topic = TOPIC_SETTINGS, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
-        .on_release = NULL, .release_ctx = NULL,
-    };
-    ctx->bus_topic_policies[1] = (topic_policy_t){
-        .topic = TOPIC_DIAG, .depth = 4, .on_full = EVENT_OVERFLOW_DROP_NEWEST,
-        .on_release = NULL, .release_ctx = NULL,
-    };
-    ctx->bus_topic_policies[2] = (topic_policy_t){
-        .topic = TOPIC_NET, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
-        .on_release = NULL, .release_ctx = NULL,
-    };
-    ctx->bus_topic_policies[3] = (topic_policy_t){
-        .topic = TOPIC_TIME, .depth = 2, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
-        .on_release = NULL, .release_ctx = NULL,
-    };
-    ctx->bus_topic_policies[4] = (topic_policy_t){
-        .topic = TOPIC_OTA, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
-        .on_release = NULL, .release_ctx = NULL,
-    };
-    ctx->bus_topic_policies[5] = (topic_policy_t){
-        .topic = TOPIC_DENON, .depth = 8, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
-        .on_release = NULL, .release_ctx = NULL,
-    };
-    core_eventbus_init(&ctx->bus, ctx->bus_subs, APP_EVENTBUS_MAX_SUBS,
-                        ctx->bus_topic_policies, APP_EVENTBUS_TOPIC_POLICIES,
-                        make_real_lock(ctx->bus_lock_sem));
-
-    /* Subscribed before anything (svc_settings, created below) can
-     * possibly publish to TOPIC_SETTINGS -- denon_settings_relay_tick_trampoline
-     * drains this. */
-    if (!core_eventbus_subscribe(&ctx->bus, TOPIC_SETTINGS, ctx->denon_settings_sub_storage,
-                                   sizeof(ctx->denon_settings_sub_storage) / sizeof(ctx->denon_settings_sub_storage[0]),
-                                   &ctx->denon_settings_sub)) {
-        ESP_LOGE(TAG, "denon settings subscription failed");
-        return false;
+    if (!app_wiring_create_bus(ctx, make_real_lock(ctx->bus_lock_sem))) {
+        return false;   /* app_wiring_create_bus() already logged the reason */
     }
 
     /* --- intents (Phase 3): EVENTS_AND_STATE.md §5.1's single intent
@@ -195,12 +165,8 @@ bool app_wiring_create(app_ctx_t *ctx)
         return false;
     }
 
-    /* Empty ruleset: no secret-bearing subsystem exists yet in Phase 1
-     * (svc_logging_redact.c's mechanism is proven against a synthetic
-     * secret in its own host test). */
-    if (!svc_logging_create(&ctx->logging, NULL, 0)) {
-        ESP_LOGE(TAG, "svc_logging_create failed");
-        return false;
+    if (!app_wiring_create_logging(ctx)) {
+        return false;   /* app_wiring_create_logging() already logged the reason */
     }
 
     if (!svc_settings_create(&ctx->settings, ctx->settings_kv, &ctx->bus, clock)) {
@@ -270,20 +236,38 @@ bool app_wiring_create(app_ctx_t *ctx)
         return false;   /* app_wiring_create_denon() already logged the reason */
     }
 
+    /* --- spotify (Phase 4): depends on net_http (its transport), net_time
+     * (sync-gating, Phase 4 plan §2), and secure_kv (credentials), all
+     * already up --- */
+
+    if (!app_wiring_create_spotify(ctx, clock)) {
+        return false;   /* app_wiring_create_spotify() already logged the reason */
+    }
+
+    /* --- artwork (Phase 4): depends on net_http (its transport) and
+     * TOPIC_PLAYBACK (subscribed directly by svc_artwork itself, no
+     * mediation needed -- see artwork_service.h) --- */
+
+    if (!app_wiring_create_artwork(ctx, clock)) {
+        return false;   /* app_wiring_create_artwork() already logged the reason */
+    }
+
     /* --- lifecycle: collect every service's own descriptor, validate the
      * boot graph, mark everything READY --- */
 
-    ctx->service_descs[0] = SVC_STORAGE_SERVICE_DESC;
-    ctx->service_descs[1] = SVC_SCHEDULER_SERVICE_DESC;
-    ctx->service_descs[2] = SVC_LOGGING_SERVICE_DESC;
-    ctx->service_descs[3] = SVC_SETTINGS_SERVICE_DESC;
-    ctx->service_descs[4] = SVC_DIAGNOSTICS_SERVICE_DESC;
-    ctx->service_descs[5] = SVC_NET_WIFI_SERVICE_DESC;
-    ctx->service_descs[6] = SVC_NET_TIME_SERVICE_DESC;
-    ctx->service_descs[7] = SVC_NET_HTTP_SERVICE_DESC;
-    ctx->service_descs[8] = SVC_OTA_SERVICE_DESC;
-    ctx->service_descs[9] = svc_denon_service_desc(&ctx->svc_denon_restart_ctx);
-    ctx->service_count = 10;
+    ctx->service_descs[0]  = SVC_STORAGE_SERVICE_DESC;
+    ctx->service_descs[1]  = SVC_SCHEDULER_SERVICE_DESC;
+    ctx->service_descs[2]  = SVC_LOGGING_SERVICE_DESC;
+    ctx->service_descs[3]  = SVC_SETTINGS_SERVICE_DESC;
+    ctx->service_descs[4]  = SVC_DIAGNOSTICS_SERVICE_DESC;
+    ctx->service_descs[5]  = SVC_NET_WIFI_SERVICE_DESC;
+    ctx->service_descs[6]  = SVC_NET_TIME_SERVICE_DESC;
+    ctx->service_descs[7]  = SVC_NET_HTTP_SERVICE_DESC;
+    ctx->service_descs[8]  = SVC_OTA_SERVICE_DESC;
+    ctx->service_descs[9]  = svc_denon_service_desc(&ctx->svc_denon_restart_ctx);
+    ctx->service_descs[10] = svc_spotify_service_desc(&ctx->svc_spotify_restart_ctx);
+    ctx->service_descs[11] = svc_artwork_service_desc(&ctx->svc_artwork_restart_ctx);
+    ctx->service_count = 12;
 
     if (!make_semaphore(&ctx->supervisor_lock_sem)) {
         ESP_LOGE(TAG, "supervisor lock create failed");
@@ -346,6 +330,12 @@ bool app_wiring_create(app_ctx_t *ctx)
                                        intent_dispatch_tick_trampoline, ctx,
                                        &ctx->intent_dispatch_tick_job)) {
         ESP_LOGE(TAG, "failed to schedule intent dispatch tick");
+        return false;
+    }
+    if (!svc_scheduler_post_periodic(&ctx->scheduler, OTA_ARTWORK_RELAY_TICK_PERIOD_US,
+                                       ota_artwork_relay_tick_trampoline, ctx,
+                                       &ctx->ota_artwork_relay_tick_job)) {
+        ESP_LOGE(TAG, "failed to schedule ota/artwork relay tick");
         return false;
     }
 

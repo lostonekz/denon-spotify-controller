@@ -101,6 +101,14 @@ ota_admit_t ota_policy_admit_image(const ota_manifest_t *m,
     return OTA_ADMIT_OK;
 }
 
+bool ota_download_would_overflow(uint32_t total_so_far, int chunk_len, uint32_t image_size)
+{
+    if (image_size == 0u || chunk_len <= 0) {
+        return false;   /* unknown size, or nothing to write -- nothing to bound against */
+    }
+    return (uint64_t)total_so_far + (uint64_t)chunk_len > (uint64_t)image_size;
+}
+
 const char *ota_admit_str(ota_admit_t a)
 {
     switch (a) {

@@ -79,7 +79,7 @@ denon-spotify-controller/
 │   │
 │   ├── svc_artwork/
 │   │   ├── artwork_service.c           # fetch task, slot lifecycle
-│   │   ├── artwork_cache.c             # refcounted slot pool, generation counters
+│   │   ├── artwork_cache.c             # generation-tagged, single-owner slot pool (not refcounted)
 │   │   ├── artwork_decode.c            # JPEG -> RGB565 at 1/2 scale
 │   │   └── artwork_palette.c           # dominant colour extraction  (pure, host-tested)
 │   │
@@ -134,7 +134,7 @@ Each module gets one paragraph. If it needs two, it's doing too much.
 | `svc_ota` | Poll a manifest over TLS, download to the inactive slot, verify SHA-256, reboot, and confirm-or-rollback based on a health gate. |
 | `svc_spotify` | Own the Spotify session: OAuth PKCE, token refresh + rotation, adaptive polling of `/v1/me/player`, intent execution, optimistic-state reconciliation. |
 | `svc_denon` | Own the AVR link: transport selection (telnet/HTTP), command queue with coalescing, parse push events, maintain `denon_state_t`. |
-| `svc_artwork` | On track change, fetch the 640 px image, decode at ½ scale to RGB565, derive a 60 px thumb and a dominant colour, publish a refcounted slot handle. |
+| `svc_artwork` | On track change, fetch the 640 px image, decode at ½ scale to RGB565, derive a 60 px thumb and a dominant colour, publish a generation-tagged, single-owner slot handle (not refcounted). |
 | `svc_power` | Activity/idle timing, dim → sleep → wake transitions, backlight ramps, wake-on-playback, night schedule. |
 | `svc_input` | Turn raw GT911 reports into gestures (tap, drag, swipe, long-press) and then into `intent_t`. Debounce and reject palm/ghost touches. |
 

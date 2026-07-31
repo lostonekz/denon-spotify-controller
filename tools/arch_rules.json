@@ -24,6 +24,8 @@
     "core_state":    "core",
     "core_fsm":      "core",
     "svc_denon":     "svc",
+    "svc_spotify":   "svc",
+    "svc_artwork":   "svc",
     "svc_ota":       "svc",
     "svc_settings":  "svc",
     "svc_storage":   "svc",

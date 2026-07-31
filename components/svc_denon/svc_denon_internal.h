@@ -27,7 +27,7 @@ void                        denon_service_link_drive(svc_denon_t *d);
 /* denon_service_io.c -- one pass: drain+send due cmdq entries, poll the
  * active transport for incoming lines, parse/publish/write state. Called
  * once per denon task iteration. */
-void denon_service_io_tick(svc_denon_t *d);
+bool denon_service_io_tick(svc_denon_t *d);
 
 #ifdef __cplusplus
 }

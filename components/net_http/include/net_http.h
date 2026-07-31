@@ -61,6 +61,44 @@ typedef struct {
 bool net_http_get(net_http_t *h, const char *url, const http_policy_t *policy,
                     char *out_buf, size_t out_cap, net_http_response_t *resp);
 
+/* Phase 4: method + optional body + bearer token, for Spotify's token
+ * exchange/refresh (POST, form body) and player-control endpoints (PUT/
+ * POST, bearer token, mostly no body). net_http_get() is now a thin
+ * wrapper over this with {.method = NET_HTTP_METHOD_GET, .retryable_after_send = true}
+ * -- every existing caller (svc_ota, denon_http.c) is unaffected. */
+typedef enum {
+    NET_HTTP_METHOD_GET = 0,
+    NET_HTTP_METHOD_POST,
+    NET_HTTP_METHOD_PUT,
+} net_http_method_t;
+
+typedef struct {
+    const char *content_type;   /* NULL if body is NULL */
+    const void *body;
+    size_t      body_len;
+} net_http_body_t;
+
+typedef struct {
+    net_http_method_t method;
+    const char        *bearer_token;   /* NULL: no Authorization header */
+    net_http_body_t    body;           /* body.body == NULL: no request body */
+    /* GET/PUT player-control calls are idempotent -- true. Side-effecting
+     * POSTs (Spotify's /next, /previous, and the one-time token exchange/
+     * refresh) are NOT: once the request may have reached the server
+     * (esp_http_client_open()/write() succeeded) but no definite response
+     * came back, retrying risks a double-execution (Spotify's own docs
+     * warn player-command order isn't guaranteed) -- set false so a
+     * post-send ambiguous outcome is treated as final, not retried. A
+     * pre-send failure (connect never established -- nothing could have
+     * reached the server) is always safe to retry regardless of this
+     * flag. */
+    bool                retryable_after_send;
+} net_http_request_opts_t;
+
+bool net_http_request(net_http_t *h, const char *url, const net_http_request_opts_t *opts,
+                        const http_policy_t *policy, char *out_buf, size_t out_cap,
+                        net_http_response_t *resp);
+
 typedef struct {
     void *client;   /* esp_http_client_handle_t, opaque -- keeps esp_http_client.h
                        out of every consumer's includes (e.g. svc_ota) */

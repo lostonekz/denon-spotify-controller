@@ -130,7 +130,7 @@ Queue overflow is not an exception, it's a design parameter. Each topic declares
 |---|---|---|---|
 | `TOPIC_PLAYBACK` | 4 | **Replace oldest** — only the newest state matters | none |
 | `TOPIC_DENON` | 8 | Replace oldest | none |
-| `TOPIC_ARTWORK` | 2 | Replace oldest | `artwork_cache_release` |
+| `TOPIC_ARTWORK` | 2 | Replace oldest | none — see the note below the table |
 | intent queue* | 16 | **Drop newest + count it** — never lose an older user action | none |
 | `TOPIC_NET` | 8 | Replace oldest | none |
 | `TOPIC_TOAST` | 4 | Drop newest | none |
@@ -152,7 +152,8 @@ oldest, release the dropped handle" for `TOPIC_ARTWORK`, which quietly made a ge
 transport aware of one domain's ownership rules — a dependency-inversion violation that
 would have grown a second and third special case within a year.
 
-Instead, the release hook is **injected as part of the topic policy** at registration:
+Instead, the release hook is **injected as part of the topic policy** at registration,
+available to any future topic whose payload is a claim on caller-owned storage:
 
 ```c
 typedef void (*event_release_fn)(const event_t *dropped, void *ctx);
@@ -166,14 +167,29 @@ typedef struct {
 } topic_policy_t;
 ```
 
-`svc_artwork` registers `TOPIC_ARTWORK` with `on_release = artwork_cache_release`. The bus
-calls the hook whenever it discards an event — on overflow, on unsubscribe, and on
-shutdown — without ever knowing why. `core_eventbus` keeps zero domain knowledge, and the
-rule "whoever owns the payload owns its release" is expressed in the type system rather
-than in prose.
+**`TOPIC_ARTWORK` itself registers `on_release = NULL`, not `artwork_cache_release` — reversed
+from an earlier draft of this section, found by review during Phase 4 (`svc_artwork`).**
+`core_pool_slot_t`/`artwork_cache_t` is generation-tagged, single-owner storage
+(`artwork_cache.h`'s own ownership contract — not refcounted; see LIFECYCLE.md/MODULES.md),
+and `svc_artwork` already releases the *previous* handle itself, on its own schedule, every
+time a new one is published: the new handle is written to `core_state` and
+`ARTWORK_EVT_READY` published for it *before* the previous handle is released, so there is
+never a window where `core_state` points at an already-released slot. Wiring the bus's own
+drop-triggered `on_release` hook up *as well* would double-release the same handle the first
+time the bus ever discarded an undelivered `ARTWORK_EVT_READY` event (overflow, unsubscribe,
+or shutdown) — the hook would release a handle `svc_artwork` is also going to release later
+when superseded. Only `svc_artwork` ever calls `core_pool_slot_release()`; a subscriber that
+receives an `ARTWORK_EVT_READY` event must treat its handle as a convenience copy, not a
+grant of ownership — lock it (`core_pool_slot_lock()`) immediately before use, every time,
+and treat a failed lock (stale generation) as "no artwork right now," never as a corrupted
+frame.
 
-This also closes two leaks the prose version missed: a subscriber that unsubscribes with
-events still queued, and shutdown with a non-empty queue.
+The mechanism above — an injected `on_release` hook, generic and domain-blind — remains real,
+available machinery for a future topic whose payload genuinely *is* a releasable claim with
+no other release path of its own. `TOPIC_ARTWORK` simply isn't that case, once `svc_artwork`
+already owns a complete release schedule. It would still have closed two leaks a purely
+prose-based rule could miss (a subscriber that unsubscribes with events still queued, and
+shutdown with a non-empty queue) for any topic that does end up using it.
 
 ### 5.4 Topics
 
