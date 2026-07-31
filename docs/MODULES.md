@@ -75,7 +75,7 @@ denon-spotify-controller/
 │   │   ├── denon_telnet.c              # port 23, push events, exclusive-link handling
 │   │   ├── denon_http.c                # port 8080 fallback
 │   │   ├── denon_codec.c               # "MV525" <-> 52.5 dB  (pure, host-tested)
-│   │   └── denon_discovery.c           # SSDP/mDNS
+│   │   └── denon_discovery.c           # SSDP only (mDNS trimmed -- see NETWORKING.md §1.4)
 │   │
 │   ├── svc_artwork/
 │   │   ├── artwork_service.c           # fetch task, slot lifecycle

@@ -18,6 +18,18 @@
  * it needs an injected kv_store_if_t and is deliberately deferred -- no
  * Phase 1 exit criterion requires it, and this is a scope cut, not an
  * oversight.
+ *
+ * Phase 2 adds the OTA health gate (LIFECYCLE.md §1.4: svc_supervisor owns
+ * the verdict so svc_ota never reaches into subsystems it should not know
+ * about). The gate itself (svc_supervisor_health.h) is pure; this file only
+ * adds the glue to feed it: an opt-in subscription to TOPIC_NET/TOPIC_TIME
+ * (legal -- core_eventbus is a core dependency, unlike a direct svc_ota
+ * edge) for the two conditions observable passively, plus a thin
+ * report/verdict API for app_wiring (and, relayed through it, svc_ota) to
+ * use for the conditions it cannot observe on its own. svc_supervisor_init()
+ * itself is unchanged -- the health gate is only wired up by calling
+ * svc_supervisor_health_gate_start() afterward, so every existing caller
+ * (and test_supervisor.c) keeps working untouched.
  */
 #ifndef SVC_SUPERVISOR_H
 #define SVC_SUPERVISOR_H
@@ -26,8 +38,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "core_eventbus.h"
 #include "lifecycle_types.h"
 #include "os_if_types.h"
+#include "svc_supervisor_health.h"
 #include "svc_supervisor_restart.h"
 
 #ifdef __cplusplus
@@ -62,6 +76,15 @@ typedef struct {
     void                     (*reboot_fn)(void);
 
     restart_history_t          reboot_history;   /* see the KNOWN GAP note above */
+
+    /* OTA health gate -- unused (all-zero) unless svc_supervisor_health_gate_start()
+     * is called. */
+    svc_supervisor_health_t   health;
+    core_eventbus_t            *health_bus;
+    eventbus_sub_h               health_net_sub;
+    event_t                        health_net_sub_storage[4];
+    eventbus_sub_h               health_time_sub;
+    event_t                        health_time_sub_storage[4];
 } svc_supervisor_t;
 
 void svc_supervisor_init(svc_supervisor_t *sup, const service_desc_t *descs, svc_state_t *states,
@@ -86,6 +109,36 @@ bool svc_supervisor_get_status(const svc_supervisor_t *sup, service_id_t id,
  * the service's own max_restarts, degrading (if degraded_ok) or failing
  * permanently once that cap is hit. No-op if `id` was never registered. */
 void svc_supervisor_report_state(svc_supervisor_t *sup, service_id_t id, subsystem_status_t status);
+
+/* Starts the OTA health gate: inits svc_supervisor_health_t against sup's
+ * own clock, and subscribes to TOPIC_NET/TOPIC_TIME for the two conditions
+ * (HEALTH_COND_WIFI_IP, HEALTH_COND_SNTP_SYNCED) this module can observe
+ * passively. Call once, after svc_supervisor_init(), only on a build that
+ * actually has net_wifi/net_time wired up (app_wiring's job, not this
+ * module's -- svc_supervisor itself has no opinion on whether OTA exists).
+ */
+void svc_supervisor_health_gate_start(svc_supervisor_t *sup, core_eventbus_t *bus);
+
+/* Drains any queued TOPIC_NET/TOPIC_TIME events since the last call and
+ * folds them into the health gate. Call periodically (recommended: every
+ * ~1 s), same tick pattern as net_time_tick()/svc_settings_tick(). No-op if
+ * svc_supervisor_health_gate_start() was never called. */
+void svc_supervisor_health_gate_tick(svc_supervisor_t *sup);
+
+/* For the conditions this module cannot observe on its own (boot-complete,
+ * storage-mounted, TLS-handshake-proven, heap-watermark, plus the Phase 2
+ * panel/UI and tasks-ok stand-ins) -- reported by app_wiring or (relayed
+ * through app_wiring, since svc has no self-edge) svc_ota. Sticky, same as
+ * svc_supervisor_health_report() underneath. Named distinctly from that
+ * function (not an overload -- C has none) to avoid a same-name/
+ * different-signature collision with svc_supervisor_health.h. */
+void svc_supervisor_report_health_condition(svc_supervisor_t *sup, health_condition_t cond, bool ok);
+
+/* The current verdict, evaluated against sup's own clock. Meaningful only
+ * after svc_supervisor_health_gate_start() has been called; calling it
+ * beforehand reads whatever clock.now_us() returns against a start_us of
+ * 0, which is not a real gate window and is the caller's bug to avoid. */
+health_gate_verdict_t svc_supervisor_health_gate_verdict(svc_supervisor_t *sup);
 
 #ifdef __cplusplus
 }

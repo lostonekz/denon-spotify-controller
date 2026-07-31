@@ -10,29 +10,50 @@
 #include <stddef.h>
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 
 #include "core_eventbus.h"
 #include "core_state.h"
+#include "denon_service.h"
+#include "intent_types.h"
 #include "kv_store_if.h"
 #include "lifecycle_types.h"
+#include "net_http.h"
+#include "net_time.h"
+#include "net_wifi.h"
 #include "svc_diagnostics.h"
 #include "svc_logging.h"
+#include "svc_ota.h"
 #include "svc_scheduler.h"
 #include "svc_settings.h"
 #include "svc_storage.h"
 #include "svc_supervisor.h"
 
-/* Sized for Phase 1's own subscriber count (zero -- no UI, no other
- * consumers yet) plus headroom for the next couple of phases' consumers.
- * Not a hard architectural limit; raise it when a real subscriber needs
+/* Sized for real subscriber count plus headroom for later phases. Phase 2
+ * adds 3 real subscriptions (svc_supervisor on TOPIC_NET+TOPIC_TIME,
+ * net_time on TOPIC_NET); Phase 3 adds 1 (app_wiring on TOPIC_SETTINGS, to
+ * relay denon_host/denon_transport_pref/volume_step/volume_limit_max into
+ * svc_denon -- svc_denon cannot call svc_settings itself, no svc->svc edge).
+ * Not a hard architectural limit, raise it when a real subscriber needs
  * more room. */
-#define APP_EVENTBUS_MAX_SUBS       8
-#define APP_EVENTBUS_TOPIC_POLICIES 2   /* only TOPIC_SETTINGS/TOPIC_DIAG are published in Phase 1 */
+#define APP_EVENTBUS_MAX_SUBS       12
+/* TOPIC_SETTINGS/TOPIC_DIAG (Phase 1) + TOPIC_NET/TOPIC_TIME/TOPIC_OTA
+ * (Phase 2) + TOPIC_DENON (Phase 3). */
+#define APP_EVENTBUS_TOPIC_POLICIES 6
 
-/* Every Phase 1 service that has a service_desc_t (storage, scheduler,
- * logging, settings, diagnostics). Grows as later phases add services. */
-#define APP_SUPERVISOR_MAX_SERVICES 5
+/* Every service that has a service_desc_t: Phase 1's storage/scheduler/
+ * logging/settings/diagnostics (5) + Phase 2's net_wifi/net_time/net_http/
+ * svc_ota (4) + Phase 3's svc_denon (1). Grows as later phases add services. */
+#define APP_SUPERVISOR_MAX_SERVICES 10
+
+/* EVENTS_AND_STATE.md §5.3's documented (but, until Phase 3, unbuilt)
+ * TOPIC_INTENT policy: depth 16, drop newest + count it. intent_t does not
+ * fit core_eventbus's 64 B event_t budget (it carries a 16 B payload plus a
+ * 3-entry causal read_set on top of domain/kind/seq), and event_topic_t has
+ * no TOPIC_INTENT member -- intents travel through this dedicated queue
+ * instead, not through core_eventbus. */
+#define APP_INTENT_QUEUE_DEPTH 16
 
 typedef struct {
     /* --- core --- */
@@ -56,6 +77,35 @@ typedef struct {
 
     scheduler_job_h      settings_tick_job;
     scheduler_job_h      diagnostics_tick_job;
+
+    /* --- net (Phase 2) --- */
+    kv_store_if_t      secure_kv;   /* "secure" namespace: wifi.ssid/wifi.psk (PLATFORM.md §3.2) */
+    net_wifi_t           net_wifi;
+    net_time_t             net_time;
+    net_http_t                net_http;
+    scheduler_job_h             net_time_tick_job;
+
+    /* --- ota (Phase 2) --- */
+    kv_store_if_t      ota_kv;   /* "ota" namespace: sec_ver_max/heap_wm */
+    svc_ota_t            svc_ota;
+    scheduler_job_h         svc_ota_tick_job;
+    scheduler_job_h           health_gate_relay_tick_job;
+
+    /* --- intents (Phase 3): EVENTS_AND_STATE.md §5.1's single intent queue,
+     * consumed by a dispatcher that routes by intent_domain_t. Depth-16,
+     * drop-newest-and-count on overflow (intent_drop_count) -- see
+     * APP_INTENT_QUEUE_DEPTH's comment for why this is a dedicated queue,
+     * not a core_eventbus topic. --- */
+    QueueHandle_t        intent_queue;
+    scheduler_job_h         intent_dispatch_tick_job;
+    uint32_t                  intent_drop_count;
+
+    /* --- denon (Phase 3) --- */
+    svc_denon_t          svc_denon;
+    svc_denon_restart_ctx_t svc_denon_restart_ctx;
+    eventbus_sub_h       denon_settings_sub;   /* TOPIC_SETTINGS, relayed into svc_denon */
+    event_t                denon_settings_sub_storage[4];
+    scheduler_job_h           denon_settings_relay_tick_job;
 
     /* --- lifecycle --- */
     service_desc_t       service_descs[APP_SUPERVISOR_MAX_SERVICES];

@@ -33,9 +33,40 @@ there is nothing to keep in sync locally.
 fails a **production** build that contains dev key material — see gate 4 in
 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) §1.4.
 
+## Development manifest-signing key (Phase 2)
+
+`dev_manifest_signing.pem` — a **second**, independent dev key, unrelated to
+`dev_ota_signing.pem` above. Two separate signature schemes exist in this
+project on purpose (docs/SECURITY.md §3): the RSA-3072 key above is
+ESP-IDF's own bootloader-enforced *image* signature, fixed by the chip;
+this one signs the *manifest* (`manifest.json`) that names which image to
+fetch, and is entirely our own application code (`components/svc_ota`,
+`tools/gen_manifest.py`) — free to pick any scheme, and ECDSA P-256 is the
+one this project picked.
+
+Generate one locally:
+
+```bash
+openssl ecparam -genkey -name prime256v1 -noout -out tools/keys/dev_manifest_signing.pem
+```
+
+Same posture as the RSA dev key: it protects nothing, CI can regenerate a
+fresh one on every run, and `tools/gen_trust_anchor.py` derives the
+compiled-in public half (`components/svc_ota/ota_trust_anchor_dev.c`) from
+whatever key currently lives at this path -- run it again after rotating
+your local key:
+
+```bash
+python tools/gen_trust_anchor.py
+```
+
+`tools/check_release.py`'s production profile fails if this file (or the
+derived `ota_trust_anchor_dev.c`) is present, same as the RSA dev key.
+
 ## Release key
 
 Generated offline, never placed in this directory, never committed. Backup
 location is recorded in project operational notes, not in source control —
 see [SECURITY.md](../../docs/SECURITY.md) §4 on why (key loss on an OTA-only
-device is close to fatal).
+device is close to fatal). The release manifest-signing key follows the same
+rule -- offline, never committed, independent backup from the RSA release key.

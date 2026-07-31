@@ -131,12 +131,21 @@ Queue overflow is not an exception, it's a design parameter. Each topic declares
 | `TOPIC_PLAYBACK` | 4 | **Replace oldest** — only the newest state matters | none |
 | `TOPIC_DENON` | 8 | Replace oldest | none |
 | `TOPIC_ARTWORK` | 2 | Replace oldest | `artwork_cache_release` |
-| `TOPIC_INTENT` | 16 | **Drop newest + count it** — never lose an older user action | none |
+| intent queue* | 16 | **Drop newest + count it** — never lose an older user action | none |
 | `TOPIC_NET` | 8 | Replace oldest | none |
 | `TOPIC_TOAST` | 4 | Drop newest | none |
 
 Every drop increments a counter visible in diagnostics. A rising drop count is the earliest
 signal that a task is falling behind.
+
+*`intent_t` does not travel over `core_eventbus` and there is no `TOPIC_INTENT` member of
+`event_topic_t` — it doesn't fit `event_t`'s fixed-size union budget (§5.2), and intents are
+consumed by one dispatcher rather than fanned out to subscribers, so bus semantics buy
+nothing here. Phase 3 (`svc_denon`) implemented it as a dedicated `QueueHandle_t` owned
+directly in `app_ctx_t` (same shape as `svc_ota_t.result_queue`: a plain FreeRTOS queue
+inside a struct, no new abstraction component), drained by `intent_dispatch_tick_trampoline`
+in `app_wiring`. It adopts this table's depth-16/drop-newest-and-count policy values
+verbatim — only the transport differs from what this row's name implies.
 
 **The bus does not know what an artwork handle is.** An earlier draft specified "replace
 oldest, release the dropped handle" for `TOPIC_ARTWORK`, which quietly made a generic

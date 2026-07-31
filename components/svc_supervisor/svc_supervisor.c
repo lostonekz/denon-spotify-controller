@@ -138,3 +138,45 @@ void svc_supervisor_report_state(svc_supervisor_t *sup, service_id_t id, subsyst
         handle_service_restart_policy(sup, idx);
     }
 }
+
+void svc_supervisor_health_gate_start(svc_supervisor_t *sup, core_eventbus_t *bus)
+{
+    sup->health_bus = bus;
+    svc_supervisor_health_init(&sup->health, sup->clock.now_us(sup->clock.ctx));
+
+    core_eventbus_subscribe(bus, TOPIC_NET, sup->health_net_sub_storage,
+                              sizeof(sup->health_net_sub_storage) / sizeof(sup->health_net_sub_storage[0]),
+                              &sup->health_net_sub);
+    core_eventbus_subscribe(bus, TOPIC_TIME, sup->health_time_sub_storage,
+                              sizeof(sup->health_time_sub_storage) / sizeof(sup->health_time_sub_storage[0]),
+                              &sup->health_time_sub);
+}
+
+void svc_supervisor_health_gate_tick(svc_supervisor_t *sup)
+{
+    if (sup->health_bus == NULL) {
+        return;
+    }
+
+    event_t evt;
+    while (core_eventbus_poll(sup->health_bus, sup->health_net_sub, &evt)) {
+        if (evt.u.net.kind == NET_EVT_IP_ACQUIRED) {
+            svc_supervisor_report_health_condition(sup, HEALTH_COND_WIFI_IP, true);
+        }
+    }
+    while (core_eventbus_poll(sup->health_bus, sup->health_time_sub, &evt)) {
+        if (evt.u.time.synced) {
+            svc_supervisor_report_health_condition(sup, HEALTH_COND_SNTP_SYNCED, true);
+        }
+    }
+}
+
+void svc_supervisor_report_health_condition(svc_supervisor_t *sup, health_condition_t cond, bool ok)
+{
+    svc_supervisor_health_report(&sup->health, cond, ok);
+}
+
+health_gate_verdict_t svc_supervisor_health_gate_verdict(svc_supervisor_t *sup)
+{
+    return svc_supervisor_health_evaluate(&sup->health, sup->clock.now_us(sup->clock.ctx));
+}

@@ -137,6 +137,55 @@ static void test_mv_display(void)
     TEST_ASSERT_EQUAL_STRING("98.0", buf);
 }
 
+/* --- denon_clamp_volume() -- docs/RISKS.md R13, docs/adr/0007 --- */
+
+static void test_clamp_volume_basic(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(50, denon_clamp_volume(50, 140));    /* under limit: passes through */
+    TEST_ASSERT_EQUAL_UINT16(140, denon_clamp_volume(140, 140));  /* at limit: passes through */
+    TEST_ASSERT_EQUAL_UINT16(140, denon_clamp_volume(141, 140));  /* one over: clamped */
+    TEST_ASSERT_EQUAL_UINT16(140, denon_clamp_volume(197, 140));  /* the R13 "MV98" case: clamped */
+    TEST_ASSERT_EQUAL_UINT16(0, denon_clamp_volume(0, 140));      /* zero requested */
+}
+
+/* The limit itself being out of range (a settings-storage bug, not user
+ * error) must not become the hole this function exists to close. */
+static void test_clamp_volume_limit_never_exceeds_codec_max(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(DENON_MV_HALF_DB_MAX,
+                              denon_clamp_volume(65535, 65535));
+    TEST_ASSERT_EQUAL_UINT16(DENON_MV_HALF_DB_MAX,
+                              denon_clamp_volume(DENON_MV_HALF_DB_MAX, 500));
+    TEST_ASSERT_EQUAL_UINT16(60, denon_clamp_volume(60, 65535));
+}
+
+/* Exhaustive sweep, not sampled: for every (requested, limit) pair the
+ * result must equal exactly min(requested, min(limit, MAX)) -- the R13
+ * failure mode this exists to prevent is a coalescing/off-by-one bug, and
+ * only checking a few hand-picked points would be exactly the kind of
+ * false economy test_mv_roundtrip_exhaustive already rejects for MV itself. */
+static void test_clamp_volume_exhaustive(void)
+{
+    static const uint16_t limits[] = {0, 1, 70, 140, DENON_MV_HALF_DB_MAX, 250, 60000, 65535};
+
+    for (size_t li = 0; li < sizeof(limits) / sizeof(limits[0]); li++) {
+        uint16_t limit = limits[li];
+        uint16_t effective_limit = limit < DENON_MV_HALF_DB_MAX ? limit : DENON_MV_HALF_DB_MAX;
+
+        for (uint32_t requested = 0; requested <= 300; requested++) {
+            uint16_t expect = (uint16_t)requested < effective_limit
+                                   ? (uint16_t)requested : effective_limit;
+            uint16_t got = denon_clamp_volume((uint16_t)requested, limit);
+
+            char msg[80];
+            snprintf(msg, sizeof(msg), "requested=%u limit=%u", (unsigned)requested, limit);
+            TEST_ASSERT_EQUAL_UINT16_MESSAGE(expect, got, msg);
+            TEST_ASSERT_TRUE_MESSAGE(got <= DENON_MV_HALF_DB_MAX, msg);
+            TEST_ASSERT_TRUE_MESSAGE(got <= limit, msg);
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -149,5 +198,8 @@ int main(void)
     RUN_TEST(test_mv_parse_hostile_input);
     RUN_TEST(test_mv_format_rejects_small_buffer);
     RUN_TEST(test_mv_display);
+    RUN_TEST(test_clamp_volume_basic);
+    RUN_TEST(test_clamp_volume_limit_never_exceeds_codec_max);
+    RUN_TEST(test_clamp_volume_exhaustive);
     return UNITY_END();
 }

@@ -220,6 +220,12 @@ error at 2 a.m. It gets a test table with every boundary case.
 Settings. The resolved host is cached in NVS; re-discovery happens only when the cached
 host stops responding, so a DHCP lease change self-heals without user action.
 
+**Implemented as SSDP + manual only, no mDNS rung** — a deliberate scope trim, not an
+oversight: no Denon-specific technical reason for mDNS was found anywhere (no "some models
+don't respond to SSDP" caveat), a broad `ssdp:all` search filtered by a case-insensitive
+"denon" substring match found a real AVR-X3800H reliably in testing, and manual entry (the
+debug console's `denon host <ip>`) is the ultimate fallback regardless.
+
 **Capability probe at startup.** `GET /goform/Deviceinfo.xml` records model, firmware, and
 available zones/inputs. Denon firmware updates have historically changed these endpoints;
 probing means we detect a mismatch and degrade cleanly rather than misbehaving.

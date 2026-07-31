@@ -86,6 +86,23 @@ denon_codec_status_t denon_mv_format(uint16_t half_db, char *buf, size_t buflen)
 /* Convenience for tests and UI formatting: 105 -> "52.5". Not on the hot path. */
 void denon_mv_to_display(uint16_t half_db, char *buf, size_t buflen);
 
+/*
+ * The volume safety clamp (docs/adr/0007, docs/PLATFORM.md §3.4, docs/RISKS.md
+ * R13 -- the same requirement stated three independent times). A stray touch
+ * or a coalescing bug must never be able to send an outgoing MV command above
+ * the user's configured limit, regardless of which screen, gesture, or future
+ * integration issued the request. Called at the point an outgoing MV command
+ * is formed, inside svc_denon -- never relied on in the UI layer.
+ *
+ * Also clamps to DENON_MV_HALF_DB_MAX regardless of limit_half_db, so an
+ * out-of-range limit (a settings-storage bug, not user error) can't itself
+ * become the hole this function exists to close.
+ *
+ * Pure min(); a real function (not a macro) so it has one obvious call site
+ * to audit and one boundary test table, matching R13's explicit test intent.
+ */
+uint16_t denon_clamp_volume(uint16_t requested_half_db, uint16_t limit_half_db);
+
 #ifdef __cplusplus
 }
 #endif

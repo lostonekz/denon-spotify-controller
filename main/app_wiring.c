@@ -2,9 +2,16 @@
 
 #include <string.h>
 
+#include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+
+#include "app_wiring_denon.h"
+#include "app_wiring_ticks.h"
+#include "fw_version_generated.h"
+#include "ota_trust_anchor_dev.h"
 
 static const char *TAG = "app_wiring";
 
@@ -27,15 +34,42 @@ static time_source_t real_clock(void)
     return t;
 }
 
-/* --- svc_scheduler tick trampolines (app_wiring owns scheduling; the
- * services themselves have no svc_scheduler dependency -- see
- * svc_settings.h/svc_diagnostics.h) --- */
-
-static void settings_tick_trampoline(void *ctx)    { svc_settings_tick((svc_settings_t *)ctx); }
-static void diagnostics_tick_trampoline(void *ctx) { svc_diagnostics_report_tick((svc_diagnostics_t *)ctx); }
+/* svc_scheduler tick trampolines (app_wiring owns scheduling; the services
+ * themselves have no svc_scheduler dependency -- see svc_settings.h/
+ * svc_diagnostics.h) live in app_wiring_ticks.c, split out purely for the
+ * 400-line gate. */
 
 #define SETTINGS_TICK_PERIOD_US    ((int64_t)1 * 1000000)
 #define DIAGNOSTICS_TICK_PERIOD_US ((int64_t)5 * 1000000)
+#define NET_TIME_TICK_PERIOD_US    ((int64_t)1 * 1000000)
+#define SVC_OTA_TICK_PERIOD_US     ((int64_t)1 * 1000000)
+#define HEALTH_GATE_TICK_PERIOD_US ((int64_t)1 * 1000000)
+#define DENON_SETTINGS_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
+/* Frequent enough not to undercut Phase 3's own sub-100ms feedback goal --
+ * docs/ROADMAP.md Phase 3's plan picked ~20-50ms; 20ms chosen here. */
+#define INTENT_DISPATCH_TICK_PERIOD_US ((int64_t)20 * 1000)
+
+/* docs/NETWORKING.md §1.6, verbatim -- "OTA...gets a different policy" is
+ * not true yet in Phase 2 (only one real net_http caller exists), so this
+ * one policy serves both the manifest check and the image download. */
+static const http_policy_t OTA_HTTP_POLICY = {
+    .connect_timeout_ms = 5000,
+    .request_timeout_ms = 8000,
+    .max_retries         = 2,
+    .backoff_base_ms       = 500,
+    .retry_on_5xx           = true,
+    .honour_retry_after      = true,
+};
+
+/* Kconfig omits a `bool ... default n` symbol from sdkconfig.h entirely
+ * when unset, rather than defining it 0 -- referencing
+ * CONFIG_DSC_OTA_FORCE_CHECK_ON_BOOT directly as a plain C value would be
+ * an undeclared identifier on any build that hasn't turned it on. */
+#ifdef CONFIG_DSC_OTA_FORCE_CHECK_ON_BOOT
+#define DSC_OTA_FORCE_CHECK_ON_BOOT_VAL true
+#else
+#define DSC_OTA_FORCE_CHECK_ON_BOOT_VAL false
+#endif
 
 static bool make_semaphore(SemaphoreHandle_t *out)
 {
@@ -47,6 +81,20 @@ bool app_wiring_create(app_ctx_t *ctx)
 {
     memset(ctx, 0, sizeof(*ctx));
     time_source_t clock = real_clock();
+
+    /* --- one-time ESP-IDF prerequisites for any esp_netif/esp_wifi/
+     * esp_event use (net_wifi_create() itself owns esp_wifi_init() and its
+     * own esp_netif_create_default_wifi_sta/ap() calls, but the netif
+     * subsystem and default event loop are process-wide, not per-service) --- */
+
+    if (esp_netif_init() != ESP_OK) {
+        ESP_LOGE(TAG, "esp_netif_init failed");
+        return false;
+    }
+    if (esp_event_loop_create_default() != ESP_OK) {
+        ESP_LOGE(TAG, "esp_event_loop_create_default failed");
+        return false;
+    }
 
     /* --- core --- */
 
@@ -62,9 +110,44 @@ bool app_wiring_create(app_ctx_t *ctx)
         .topic = TOPIC_DIAG, .depth = 4, .on_full = EVENT_OVERFLOW_DROP_NEWEST,
         .on_release = NULL, .release_ctx = NULL,
     };
+    ctx->bus_topic_policies[2] = (topic_policy_t){
+        .topic = TOPIC_NET, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
+        .on_release = NULL, .release_ctx = NULL,
+    };
+    ctx->bus_topic_policies[3] = (topic_policy_t){
+        .topic = TOPIC_TIME, .depth = 2, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
+        .on_release = NULL, .release_ctx = NULL,
+    };
+    ctx->bus_topic_policies[4] = (topic_policy_t){
+        .topic = TOPIC_OTA, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
+        .on_release = NULL, .release_ctx = NULL,
+    };
+    ctx->bus_topic_policies[5] = (topic_policy_t){
+        .topic = TOPIC_DENON, .depth = 8, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
+        .on_release = NULL, .release_ctx = NULL,
+    };
     core_eventbus_init(&ctx->bus, ctx->bus_subs, APP_EVENTBUS_MAX_SUBS,
                         ctx->bus_topic_policies, APP_EVENTBUS_TOPIC_POLICIES,
                         make_real_lock(ctx->bus_lock_sem));
+
+    /* Subscribed before anything (svc_settings, created below) can
+     * possibly publish to TOPIC_SETTINGS -- denon_settings_relay_tick_trampoline
+     * drains this. */
+    if (!core_eventbus_subscribe(&ctx->bus, TOPIC_SETTINGS, ctx->denon_settings_sub_storage,
+                                   sizeof(ctx->denon_settings_sub_storage) / sizeof(ctx->denon_settings_sub_storage[0]),
+                                   &ctx->denon_settings_sub)) {
+        ESP_LOGE(TAG, "denon settings subscription failed");
+        return false;
+    }
+
+    /* --- intents (Phase 3): EVENTS_AND_STATE.md §5.1's single intent
+     * queue -- see app_ctx.h's APP_INTENT_QUEUE_DEPTH comment for why this
+     * is a dedicated FreeRTOS queue, not a core_eventbus topic. --- */
+    ctx->intent_queue = xQueueCreate(APP_INTENT_QUEUE_DEPTH, sizeof(intent_t));
+    if (ctx->intent_queue == NULL) {
+        ESP_LOGE(TAG, "intent queue create failed");
+        return false;
+    }
 
     if (!make_semaphore(&ctx->state_lock_sem)) {
         ESP_LOGE(TAG, "state lock create failed");
@@ -72,7 +155,7 @@ bool app_wiring_create(app_ctx_t *ctx)
     }
     core_state_init(&ctx->state, make_real_lock(ctx->state_lock_sem), clock);
 
-    /* --- storage first: settings/diagnostics both need a namespace from it --- */
+    /* --- storage first: every namespace-owning service needs one from it --- */
 
     if (!svc_storage_create(&ctx->storage)) {
         ESP_LOGE(TAG, "svc_storage_create failed");
@@ -86,6 +169,26 @@ bool app_wiring_create(app_ctx_t *ctx)
         ESP_LOGE(TAG, "failed to open 'diagnostics' namespace");
         return false;
     }
+    /* PLATFORM.md §3.2: wifi.ssid/wifi.psk live here, alongside Phase 4's
+     * Spotify secrets. KV_NS_ENCRYPTED is a documented no-op until the
+     * production secure-init path exists (svc_storage.h) -- reserving the
+     * option now costs nothing and avoids a signature change later. */
+    if (!svc_storage_open_namespace(&ctx->storage, "secure", KV_NS_ENCRYPTED, &ctx->secure_kv)) {
+        ESP_LOGE(TAG, "failed to open 'secure' namespace");
+        return false;
+    }
+    if (!svc_storage_open_namespace(&ctx->storage, "ota", KV_NS_PLAIN, &ctx->ota_kv)) {
+        ESP_LOGE(TAG, "failed to open 'ota' namespace");
+        return false;
+    }
+
+    /* Health-gate condition (PLATFORM.md §2.2): "NVS mounted, settings
+     * schema read" survived the update. Safe to report before
+     * svc_supervisor_init()/svc_supervisor_health_gate_start() run below --
+     * svc_supervisor_report_health_condition() only ever touches
+     * ctx->supervisor.health, already zeroed by this function's own
+     * memset(). */
+    svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_STORAGE_MOUNTED, true);
 
     if (!svc_scheduler_create(&ctx->scheduler, clock)) {
         ESP_LOGE(TAG, "svc_scheduler_create failed");
@@ -111,6 +214,62 @@ bool app_wiring_create(app_ctx_t *ctx)
     }
     svc_diagnostics_check_coredump_on_boot(&ctx->diagnostics);
 
+    /* --- net (Phase 2): net_wifi/net_time/net_http have no dependency on
+     * each other (net has no self-edge, arch_rules.json) --- */
+
+    net_wifi_cfg_t net_wifi_cfg = {
+        .secure_kv      = ctx->secure_kv,
+        .bus              = &ctx->bus,
+        .state             = &ctx->state,
+        .clock               = clock,
+        .ap_ssid_prefix        = CONFIG_DSC_PROV_AP_SSID_PREFIX,
+    };
+    if (!net_wifi_create(&ctx->net_wifi, &net_wifi_cfg)) {
+        ESP_LOGE(TAG, "net_wifi_create failed");
+        return false;
+    }
+
+    net_time_cfg_t net_time_cfg = {
+        .bus         = &ctx->bus,
+        .sntp_server   = CONFIG_DSC_SNTP_SERVER,
+    };
+    if (!net_time_create(&ctx->net_time, &net_time_cfg)) {
+        ESP_LOGE(TAG, "net_time_create failed");
+        return false;
+    }
+
+    if (!net_http_create(&ctx->net_http)) {
+        ESP_LOGE(TAG, "net_http_create failed");
+        return false;
+    }
+
+    /* --- ota (Phase 2): depends on storage (its NVS namespace) and
+     * net_http (its transport), both already up --- */
+
+    svc_ota_cfg_t ota_cfg = {
+        .bus                       = &ctx->bus,
+        .http                       = &ctx->net_http,
+        .kv                           = ctx->ota_kv,
+        .http_policy                   = OTA_HTTP_POLICY,
+        .manifest_url                   = CONFIG_DSC_OTA_MANIFEST_URL,
+        .force_check_on_boot               = DSC_OTA_FORCE_CHECK_ON_BOOT_VAL,
+        .anchors                             = DSC_DEV_TRUST_ANCHORS,
+        .anchor_count                          = DSC_DEV_TRUST_ANCHOR_COUNT,
+        .compiled_build                         = DSC_FW_BUILD,
+        .compiled_security_version                = DSC_FW_SECURITY_VERSION,
+    };
+    if (!svc_ota_create(&ctx->svc_ota, &ota_cfg)) {
+        ESP_LOGE(TAG, "svc_ota_create failed");
+        return false;
+    }
+
+    /* --- denon (Phase 3): depends on net_http (its HTTP-fallback
+     * transport) and an initial svc_settings snapshot, both already up --- */
+
+    if (!app_wiring_create_denon(ctx, clock)) {
+        return false;   /* app_wiring_create_denon() already logged the reason */
+    }
+
     /* --- lifecycle: collect every service's own descriptor, validate the
      * boot graph, mark everything READY --- */
 
@@ -119,7 +278,12 @@ bool app_wiring_create(app_ctx_t *ctx)
     ctx->service_descs[2] = SVC_LOGGING_SERVICE_DESC;
     ctx->service_descs[3] = SVC_SETTINGS_SERVICE_DESC;
     ctx->service_descs[4] = SVC_DIAGNOSTICS_SERVICE_DESC;
-    ctx->service_count = 5;
+    ctx->service_descs[5] = SVC_NET_WIFI_SERVICE_DESC;
+    ctx->service_descs[6] = SVC_NET_TIME_SERVICE_DESC;
+    ctx->service_descs[7] = SVC_NET_HTTP_SERVICE_DESC;
+    ctx->service_descs[8] = SVC_OTA_SERVICE_DESC;
+    ctx->service_descs[9] = svc_denon_service_desc(&ctx->svc_denon_restart_ctx);
+    ctx->service_count = 10;
 
     if (!make_semaphore(&ctx->supervisor_lock_sem)) {
         ESP_LOGE(TAG, "supervisor lock create failed");
@@ -128,6 +292,12 @@ bool app_wiring_create(app_ctx_t *ctx)
     svc_supervisor_init(&ctx->supervisor, ctx->service_descs, ctx->service_states,
                           ctx->service_count, make_real_lock(ctx->supervisor_lock_sem),
                           clock, esp_restart);
+
+    /* LIFECYCLE.md §1.4: svc_supervisor owns the OTA health-gate verdict.
+     * Started here (after the bus and supervisor both exist) so its
+     * TOPIC_NET/TOPIC_TIME subscriptions are live before net_wifi/net_time
+     * publish anything. */
+    svc_supervisor_health_gate_start(&ctx->supervisor, &ctx->bus);
 
     if (!svc_supervisor_boot(&ctx->supervisor)) {
         ESP_LOGE(TAG, "boot graph is invalid (cycle or missing dependency)");
@@ -148,7 +318,70 @@ bool app_wiring_create(app_ctx_t *ctx)
         ESP_LOGE(TAG, "failed to schedule diagnostics tick");
         return false;
     }
+    if (!svc_scheduler_post_periodic(&ctx->scheduler, NET_TIME_TICK_PERIOD_US,
+                                       net_time_tick_trampoline, &ctx->net_time,
+                                       &ctx->net_time_tick_job)) {
+        ESP_LOGE(TAG, "failed to schedule net_time tick");
+        return false;
+    }
+    if (!svc_scheduler_post_periodic(&ctx->scheduler, SVC_OTA_TICK_PERIOD_US,
+                                       svc_ota_tick_trampoline, &ctx->svc_ota,
+                                       &ctx->svc_ota_tick_job)) {
+        ESP_LOGE(TAG, "failed to schedule svc_ota tick");
+        return false;
+    }
+    if (!svc_scheduler_post_periodic(&ctx->scheduler, HEALTH_GATE_TICK_PERIOD_US,
+                                       health_gate_relay_tick_trampoline, ctx,
+                                       &ctx->health_gate_relay_tick_job)) {
+        ESP_LOGE(TAG, "failed to schedule health-gate relay tick");
+        return false;
+    }
+    if (!svc_scheduler_post_periodic(&ctx->scheduler, DENON_SETTINGS_RELAY_TICK_PERIOD_US,
+                                       denon_settings_relay_tick_trampoline, ctx,
+                                       &ctx->denon_settings_relay_tick_job)) {
+        ESP_LOGE(TAG, "failed to schedule denon settings relay tick");
+        return false;
+    }
+    if (!svc_scheduler_post_periodic(&ctx->scheduler, INTENT_DISPATCH_TICK_PERIOD_US,
+                                       intent_dispatch_tick_trampoline, ctx,
+                                       &ctx->intent_dispatch_tick_job)) {
+        ESP_LOGE(TAG, "failed to schedule intent dispatch tick");
+        return false;
+    }
+
+    /* Health-gate conditions this composition root can vouch for directly,
+     * now that every task/service above has actually been created:
+     * "boot reached app_start() completion" and "all tasks created and
+     * feeding the watchdog" (PLATFORM.md §2.2). Real task-watchdog
+     * registration is deferred -- too few long-running tasks exist yet in
+     * Phase 2 to distinguish "feeding WDT" from "no trip" meaningfully
+     * (same call the plan made merging those two conditions); revisit once
+     * Phase 3+ adds denon/spotify/artwork. "Panel initialised, UI
+     * rendered, touch enumerated" is hardcoded true -- no hal_display/ui
+     * until Phase 5, a documented gap, not a silent cut. */
+#ifndef CONFIG_DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT
+    svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_BOOT_COMPLETE, true);
+#else
+    /* docs/ROADMAP.md Tier 7's rollback proof: withhold this condition so
+     * the gate can only ever TIMED_OUT, never PASS. Kconfig-gated, and
+     * tools/check_release.py refuses a production profile with this set. */
+    ESP_LOGW(TAG, "DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT set -- health gate will never pass");
+#endif
+    svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_TASKS_OK, true);
+    svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_PANEL_UI, true);
 
     ESP_LOGI(TAG, "app_wiring: %d service(s) ready", (int)ctx->service_count);
+    return true;
+}
+
+bool app_wiring_submit_intent(app_ctx_t *ctx, const intent_t *intent)
+{
+    /* EVENTS_AND_STATE.md §5.3's documented policy for this queue: drop
+     * newest + count it, not block the submitting task or evict an
+     * already-queued intent. */
+    if (xQueueSend(ctx->intent_queue, intent, 0) != pdTRUE) {
+        ctx->intent_drop_count++;
+        return false;
+    }
     return true;
 }

@@ -112,6 +112,11 @@ typedef struct {
     bool             power_on;
     bool             muted;
     uint8_t          input_id;
+    uint8_t          listening_mode_id;   /* valid for DENON_EVT_LISTENING_MODE */
+    /* DENON_EVT_LINK_STATE carries no payload -- kind alone is the signal,
+     * consumers re-read the authoritative value from domain_meta_t.status
+     * via core_state_read(), same as TOPIC_NET's LINK_DOWN/LINK_UP. Carrying
+     * it twice would let the event and the state store disagree on a race. */
 } denon_evt_t;
 
 /* --- TOPIC_ARTWORK: artwork ready (handle + palette), artwork failed --- */

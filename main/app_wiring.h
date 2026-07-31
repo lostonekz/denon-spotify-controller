@@ -14,4 +14,12 @@
  * caller is expected to reboot, not to keep using it. */
 bool app_wiring_create(app_ctx_t *ctx);
 
+/* EVENTS_AND_STATE.md §5.1's single intent queue -- app_wiring's
+ * intent_dispatch_tick_trampoline drains it and routes by
+ * intent_domain_t. Thread-safe (a plain FreeRTOS queue); the debug
+ * console (docs/ROADMAP.md Phase 3 Tier 5) is the first real caller.
+ * False (and ctx->intent_drop_count incremented) if the queue is full --
+ * drop newest, not block the caller or evict an already-queued intent. */
+bool app_wiring_submit_intent(app_ctx_t *ctx, const intent_t *intent);
+
 #endif /* APP_WIRING_H */

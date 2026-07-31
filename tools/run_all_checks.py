@@ -22,7 +22,19 @@ GATES = [
     ("pins",           "check_pins.py",          []),
     ("mv_vectors",     "denon_mv_oracle.py",     []),
     ("mv_vectors_c",   "denon_mv_oracle.py",     ["--check-c"]),
+    ("ota_vectors",    "ota_manifest_oracle.py", []),
+    ("ota_vectors_c",  "ota_manifest_oracle.py", ["--check-c"]),
+    ("fw_version_header", "gen_fw_version_header.py", ["--check"]),
 ]
+
+# tools/gen_trust_anchor.py's --check is deliberately NOT a GATES entry: it
+# shells out to `openssl` to derive the current key's public half, and
+# that isn't reliably on PATH inside the ESP-IDF build's own Python
+# environment (this script's stdlib-only, subprocess-free gates all are,
+# which is why arch_checks -- the CMake target that runs this file on
+# every `idf.py build` -- can trust them unconditionally). Release tooling
+# with an external-tool dependency (this, gen_manifest.py, sign_release.py)
+# stays a manually-invoked developer check instead.
 
 
 def main():
@@ -52,7 +64,8 @@ def main():
         print("=" * 68)
         sys.stdout.flush()
         cmd = [sys.executable, path]
-        if script != "denon_mv_oracle.py":
+        if script not in ("denon_mv_oracle.py", "ota_manifest_oracle.py",
+                          "gen_fw_version_header.py", "gen_trust_anchor.py"):
             cmd += ["--root", root]
         cmd += extra
         rc = subprocess.run(cmd, cwd=root).returncode

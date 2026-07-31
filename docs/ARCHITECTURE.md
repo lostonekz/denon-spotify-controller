@@ -229,6 +229,7 @@ Core 1 belongs to the UI. Core 0 hosts WiFi and every network service.
 | `artwork` | 0 | 3 | 6 KB | on track change | yes (long) |
 | `sched` | 0 | 2 | 4 KB | periodic jobs | yes |
 | `ota` | 0 | 3 | 8 KB | created on demand, destroyed after | yes |
+| `console` | 0 | 1 | 4 KB | REPL, blocking UART read | yes |
 
 Notes that matter:
 
@@ -255,6 +256,13 @@ Notes that matter:
 - `ota` is the only task created after startup, and it exists only for the duration of an
   update. It is created *after* `svc_artwork` has been suspended and its pool released, so
   peak RAM during OTA stays bounded.
+- `console` was not anticipated in this table's original (Phase 0) form. Phase 3 adds it as
+  a UART REPL (`esp_console`) exercising `svc_denon` -- ROADMAP.md's Phase 3 bullet literally
+  says *"a crude debug UI — text on screen, no theme,"* and this deliberately overrides that
+  specific line: no `hal_display`/LVGL bring-up exists yet (Phase 5 scope), and none of Phase
+  3's actual exit criteria need an on-screen UI to verify. Only compiled in behind
+  `CONFIG_DSC_DENON_DEBUG_CONSOLE` (default off); `tools/check_release.py` refuses a
+  production profile with it set.
 
 ---
 

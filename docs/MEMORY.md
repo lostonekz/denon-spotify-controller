@@ -193,6 +193,58 @@ anything diagnosable.
   the hottest network path.
 - OTA takes both slots, with artwork suspended for the duration.
 
+**Measured, Phase 2, real hardware (ESP32-S3, `idf.py build` release config, COM6):** with
+WiFi joined (`net_wifi` → `ONLINE`) and one real TLS session in flight (`svc_ota`'s manifest
+check, one `net_http_tls_acquire(1, ...)` slot — the "OTA takes both slots" case above is not
+yet exercised, since the streaming image download needing 2 slots is a Tier 7 exercise, not
+this one), `heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)` recorded **123.7 KiB**
+(126663 B) free internal SRAM at its lowest point since boot, against the ~512 KiB total —
+comfortably above R1's 60 KiB floor (§ above), with `net_wifi`/`net_time`/`net_http`/`svc_ota`
+all running concurrently. This is a Phase 2 data point, not R1's own combined-load figure:
+no display/artwork/JPEG pipeline exists yet to contend with WiFi/TLS for the same budget
+(that combined measurement is R1's, Phase 0, before any of Phase 2 existed) — this replaces
+Phase 2's own planning-stage guess with a real number, the same way Phase 0 replaced R1's.
+`svc_diagnostics`'s periodic heap report now logs `internal_free`/`internal_free_min`
+(`MALLOC_CAP_INTERNAL`) directly, alongside the pre-existing combined-heap and PSRAM-only
+figures, so this number is a permanent, ongoing diagnostic rather than a one-off spike
+measurement.
+
+Not yet verified: the "Both Spotify and the OTA host negotiate max-fragment-length
+correctly" claim above — the measurement here used a real public HTTPS endpoint
+(`www.google.com`) as a TLS handshake target, not the actual (not-yet-existing) OTA host or
+Spotify's API (Phase 4). Tier 7's exit-criteria proofs (below) deliberately served the
+manifest/image over plain HTTP from a local test server rather than HTTPS — they exercise
+`ota_policy`'s decision logic and the real bootloader-level admit/reboot/rollback path, not
+the TLS transport itself (no custom CA trust bundle was worth building for a self-signed
+local server just for this). So this specific claim — real dual-TLS-slot pressure and
+max-fragment-length negotiation against an actual OTA host — stays open until a genuine
+HTTPS OTA host exists.
+
+**Tier 7 exit-criteria proofs — all three passed on real hardware (ESP32-S3, COM6):**
+
+1. **Wrong signing key rejected.** A manifest signed with a key outside the trust anchor was
+   fetched and rejected with `BAD_MANIFEST_SIG` before any image download began.
+2. **Downgrade rejected.** With the device's confirmed `running_security_version` bumped to
+   1, a correctly-signed manifest offering `security_version=0` was rejected with `ROLLBACK`
+   — `ota_policy.c`'s ordering (signature verified before the rollback check runs) held.
+3. **Deliberately-broken image rolls back.** A build compiled with a test-only Kconfig flag
+   (`DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT`, withholds `HEALTH_COND_BOOT_COMPLETE` so the health
+   gate can never PASS) was downloaded via the real OTA path, admitted, and booted. The
+   device correctly entered `OTA_FSM_STATE_PENDING_VERIFY` on that boot (confirmed via
+   `esp_ota_get_state_partition()`, not a direct-flash boot), the gate timed out at ~121.5 s
+   against the 120 s window, and `esp_ota_mark_app_invalid_rollback_and_reboot()` fired,
+   logging ESP-IDF's own `Rollback to previously worked partition` before rebooting back onto
+   the original good build. The bootloader-level rollback mechanism this proof exercises is
+   independent of application code — see `bootloader_utility.c`.
+
+This run also caught a real bug, not a test artifact: `svc_scheduler`'s task stack (3072 B,
+sized in Phase 1 for lightweight settings/diagnostics ticks) overflowed the first time an OTA
+apply action ran on it — `esp_ota_set_boot_partition()` + `esp_restart()`'s WiFi/netif
+teardown chain is far deeper than anything Phase 1 exercised on that shared worker task.
+Fixed by raising it to 6144 B; re-verified by rerunning the full download-reboot-timeout-
+rollback cycle to completion. Any future service that dispatches OTA-apply-style actions onto
+a shared tick-driven task should budget for this.
+
 ---
 
 ## 5. Pool inventory

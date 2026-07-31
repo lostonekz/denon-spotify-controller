@@ -60,6 +60,51 @@ target_include_directories(test_denon_codec PRIVATE
     "${REPO_ROOT}/components/svc_denon/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
+dsc_add_host_test(test_denon_codec_tables
+    test_denon_codec_tables.c
+    "${REPO_ROOT}/components/svc_denon/denon_codec_tables.c")
+target_include_directories(test_denon_codec_tables PRIVATE
+    "${REPO_ROOT}/components/svc_denon/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_denon_cmdq
+    test_denon_cmdq.c
+    "${REPO_ROOT}/components/svc_denon/denon_cmdq.c")
+target_include_directories(test_denon_cmdq PRIVATE
+    "${REPO_ROOT}/components/svc_denon/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_denon_link_fsm
+    test_denon_link_fsm.c
+    "${REPO_ROOT}/components/svc_denon/denon_link_fsm.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_denon_link_fsm PRIVATE
+    "${REPO_ROOT}/components/svc_denon/include"
+    "${REPO_ROOT}/components/core_fsm/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_denon_intent
+    test_denon_intent.c
+    "${REPO_ROOT}/components/svc_denon/denon_intent.c"
+    "${REPO_ROOT}/components/svc_denon/denon_codec.c"
+    "${REPO_ROOT}/components/svc_denon/denon_codec_tables.c")
+target_include_directories(test_denon_intent PRIVATE
+    "${REPO_ROOT}/components/svc_denon/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_denon_service_state
+    test_denon_service_state.c
+    "${REPO_ROOT}/components/svc_denon/denon_service_state.c"
+    "${REPO_ROOT}/components/svc_denon/denon_link_fsm.c"
+    "${REPO_ROOT}/components/svc_denon/denon_cmdq.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_denon_service_state PRIVATE
+    "${REPO_ROOT}/components/svc_denon/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${REPO_ROOT}/components/core_fsm/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
 dsc_add_host_test(test_ota_policy
     test_ota_policy.c
     "${REPO_ROOT}/components/svc_ota/ota_policy.c")
@@ -158,8 +203,99 @@ dsc_add_host_test(test_supervisor
     fake_time_source.c
     "${REPO_ROOT}/components/svc_supervisor/svc_supervisor.c"
     "${REPO_ROOT}/components/svc_supervisor/svc_supervisor_graph.c"
-    "${REPO_ROOT}/components/svc_supervisor/svc_supervisor_restart.c")
+    "${REPO_ROOT}/components/svc_supervisor/svc_supervisor_restart.c"
+    "${REPO_ROOT}/components/svc_supervisor/svc_supervisor_health.c"
+    "${REPO_ROOT}/components/core_eventbus/core_eventbus.c"
+    "${REPO_ROOT}/components/core_pool/core_pool_ring.c")
 target_include_directories(test_supervisor PRIVATE
     "${REPO_ROOT}/components/svc_supervisor/include"
+    "${REPO_ROOT}/components/core_eventbus/include"
+    "${REPO_ROOT}/components/core_pool/include"
     "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_ota_manifest_vectors
+    test_ota_manifest_vectors.c
+    "${REPO_ROOT}/components/svc_ota/ota_manifest_parse.c")
+target_include_directories(test_ota_manifest_vectors PRIVATE
+    "${REPO_ROOT}/components/svc_ota/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_net_wifi_fsm
+    test_net_wifi_fsm.c
+    "${REPO_ROOT}/components/net_wifi/net_wifi_fsm.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_net_wifi_fsm PRIVATE
+    "${REPO_ROOT}/components/net_wifi/include"
+    "${REPO_ROOT}/components/core_fsm/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_net_wifi_backoff
+    test_net_wifi_backoff.c
+    "${REPO_ROOT}/components/net_wifi/net_wifi_backoff.c")
+target_include_directories(test_net_wifi_backoff PRIVATE
+    "${REPO_ROOT}/components/net_wifi/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_net_wifi_provisioning_fsm
+    test_net_wifi_provisioning_fsm.c
+    "${REPO_ROOT}/components/net_wifi/net_wifi_provisioning_fsm.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_net_wifi_provisioning_fsm PRIVATE
+    "${REPO_ROOT}/components/net_wifi/include"
+    "${REPO_ROOT}/components/core_fsm/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_net_wifi_credentials
+    test_net_wifi_credentials.c
+    fake_kv_store.c
+    "${REPO_ROOT}/components/net_wifi/net_wifi_credentials.c")
+target_include_directories(test_net_wifi_credentials PRIVATE
+    "${REPO_ROOT}/components/net_wifi/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_net_wifi_ap_password
+    test_net_wifi_ap_password.c
+    "${REPO_ROOT}/components/net_wifi/net_wifi_ap_password.c")
+target_include_directories(test_net_wifi_ap_password PRIVATE
+    "${REPO_ROOT}/components/net_wifi/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_net_http_retry_policy
+    test_net_http_retry_policy.c
+    "${REPO_ROOT}/components/net_http/net_http_retry_policy.c")
+target_include_directories(test_net_http_retry_policy PRIVATE
+    "${REPO_ROOT}/components/net_http/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_supervisor_health
+    test_supervisor_health.c
+    "${REPO_ROOT}/components/svc_supervisor/svc_supervisor_health.c")
+target_include_directories(test_supervisor_health PRIVATE
+    "${REPO_ROOT}/components/svc_supervisor/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_ota_manifest_parse
+    test_ota_manifest_parse.c
+    "${REPO_ROOT}/components/svc_ota/ota_manifest_json.c"
+    "${REPO_ROOT}/components/svc_ota/ota_manifest_codec.c")
+target_include_directories(test_ota_manifest_parse PRIVATE
+    "${REPO_ROOT}/components/svc_ota/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_ota_trust_anchor
+    test_ota_trust_anchor.c
+    "${REPO_ROOT}/components/svc_ota/ota_trust_anchors.c")
+target_include_directories(test_ota_trust_anchor PRIVATE
+    "${REPO_ROOT}/components/svc_ota/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_ota_fsm
+    test_ota_fsm.c
+    "${REPO_ROOT}/components/svc_ota/ota_fsm.c"
+    "${REPO_ROOT}/components/core_fsm/core_fsm.c")
+target_include_directories(test_ota_fsm PRIVATE
+    "${REPO_ROOT}/components/svc_ota/include"
+    "${REPO_ROOT}/components/core_fsm/include"
     "${CMAKE_CURRENT_LIST_DIR}")

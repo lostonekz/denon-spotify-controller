@@ -8,6 +8,9 @@ build, so it cannot rot. That choice is only safe if shipping it is impossible.
 
 This gate proves it. In a production profile it fails on:
   - the dev trust anchor being present
+  - any key material at all under tools/keys/ (dev or release, image-signing
+    or manifest-signing -- the release key is generated offline and never
+    placed there; see tools/keys/README.md)
   - assertions / debug logging / console enabled
   - Secure Boot signing disabled
   - factory-test code compiled in
@@ -34,6 +37,12 @@ PROD_REQUIRED = [
      "assertion strings leak internals and bloat the image"),
     ("CONFIG_DSC_FACTORY_TEST", None,
      "factory-test code must not ship"),
+    ("CONFIG_DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT", None,
+     "test-only gate-timeout override must not ship"),
+    ("CONFIG_DSC_DENON_DEBUG_CONSOLE", None,
+     "debug console must not ship"),
+    ("CONFIG_DSC_DENON_SELFTEST", None,
+     "boot-time self-test must not ship"),
     ("CONFIG_ESP_CONSOLE_UART_DEFAULT", None,
      "no serial console on a shipping unit"),
 ]
@@ -67,6 +76,28 @@ def parse_config(path):
                 k, v = line.split("=", 1)
                 cfg[k.strip()] = v.strip().strip('"')
     return cfg
+
+
+def scan_key_material_files(root):
+    """Any *.pem/*.der file under tools/keys/, regardless of name or content.
+
+    Content/marker scanning (scan_for_dev_key below) only catches material
+    that happens to mention a known dev-key string -- a renamed file, or a
+    key for something markers were never written for (e.g. Phase 2's ECDSA
+    manifest-signing key), would silently pass it. tools/keys/README.md is
+    explicit that the release key is "never placed in this directory,
+    never committed" -- so the convention-independent invariant is simpler
+    and stronger: a production build has no business finding ANY key file
+    here at all.
+    """
+    keys_dir = os.path.join(root, "tools", "keys")
+    if not os.path.isdir(keys_dir):
+        return []
+    return sorted(
+        os.path.relpath(os.path.join(keys_dir, f), root).replace(os.sep, "/")
+        for f in os.listdir(keys_dir)
+        if f.endswith((".pem", ".der"))
+    )
 
 
 def scan_for_dev_key(root):
@@ -123,6 +154,7 @@ def main():
                             "burned at the manufacturing station" % key)
 
     dev_key_hits = scan_for_dev_key(root)
+    key_files = scan_key_material_files(root)
 
     if args.profile == "prod":
         for key, want, why in PROD_REQUIRED:
@@ -135,6 +167,12 @@ def main():
                                 % (key, got, want, why))
         for h in dev_key_hits:
             failures.append("dev key material in a production build: %s" % h)
+
+        for f in key_files:
+            failures.append(
+                "%s exists - production must not carry any key material in "
+                "tools/keys/ (release key is generated offline and never "
+                "placed in this directory, per tools/keys/README.md)" % f)
 
         # scan_for_dev_key() only scans main/, components/, tools/keys/ file
         # CONTENTS for the marker strings -- it never looks at sdkconfig

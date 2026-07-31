@@ -4,7 +4,14 @@
 
 #include "esp_log.h"
 
-#define SVC_SCHEDULER_TASK_STACK   3072
+/* 3072 (Phase 1's original size) overflowed on real hardware once Phase 2
+ * started running svc_ota's apply actions synchronously on this shared
+ * worker task: esp_ota_set_boot_partition() + esp_restart() pull in
+ * esp_ota_ops/netif/WiFi teardown call chains far deeper than Phase 1's
+ * settings/diagnostics ticks ever needed. Found via a genuine
+ * "***ERROR*** A stack overflow in task svc_scheduler" during Tier 7's
+ * hardware rollback proof, not a defensive guess. */
+#define SVC_SCHEDULER_TASK_STACK   6144
 #define SVC_SCHEDULER_TASK_PRIO    2
 #define SVC_SCHEDULER_MAX_SLEEP_MS 1000   /* ceiling for the idle case (no job scheduled) */
 

@@ -107,9 +107,27 @@ core architecture gets validated against a real integration early and cheaply.
 - Discovery, capability probe, volume safety clamp
 - A crude debug UI — text on screen, no theme
 
+  **Implemented instead as a UART debug console** (`esp_console` REPL, `CONFIG_DSC_DENON_DEBUG_CONSOLE`),
+  a deliberate deviation from this line: no `hal_display`/LVGL bring-up exists yet (Phase 5
+  scope), and none of this phase's actual exit criteria need an on-screen UI to verify. The
+  real on-screen Denon screen is still Phase 6, as originally planned.
+
 **Exit criteria:** volume, power, mute, input, and listening mode all work with sub-100 ms
 feedback over telnet, degrade cleanly to HTTP when the link is stolen, and the safety clamp
 holds under a fuzzed intent stream.
+
+**Verified against a real AVR-X3800H:** command round-trips (power/input/volume/mute/mode,
+including the AVR's own echo), and the safety clamp holding under a real fuzzed volume-intent
+burst (requests up to the protocol's own 98.5 dB max all clamped to `volume_limit_max` before
+reaching the wire) — both via a scripted boot-time self-test
+(`CONFIG_DSC_DENON_SELFTEST`), added after scripting interactive console input over this
+board's native USB-CDC port proved unreliable from Windows. **Not verified**: the HTTP-fallback
+trigger itself. A second telnet client (opened directly, and again while actively sending a
+command) did not disrupt the ESP32's existing session at all — the AVR appears to broadcast
+state to every connected socket rather than enforcing one client, contradicting
+[adr/0003](adr/0003-denon-dual-transport.md)'s assumption. The fallback FSM logic is still
+correct and exhaustively host-tested; only the real-world trigger condition couldn't be
+reproduced against this specific unit/firmware.
 
 ---
 

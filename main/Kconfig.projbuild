@@ -8,4 +8,68 @@ config DSC_FACTORY_TEST
         be enabled in a shipping build -- tools/check_release.py fails a
         production profile that has this set.
 
+config DSC_PROV_AP_SSID_PREFIX
+    string "Provisioning SoftAP SSID prefix"
+    default "DSC-Setup"
+    help
+        net_wifi appends a MAC-derived suffix (docs/SECURITY.md §5). Read by
+        app_wiring, injected into net_wifi_cfg_t -- net_wifi.c itself never
+        references a CONFIG_ symbol directly.
+
+config DSC_SNTP_SERVER
+    string "SNTP server"
+    default "pool.ntp.org"
+    help
+        Read by app_wiring, injected into net_time_cfg_t.
+
+config DSC_OTA_MANIFEST_URL
+    string "OTA manifest URL"
+    default "https://ota.example.com/manifest.json"
+    help
+        Read by app_wiring, injected into svc_ota_cfg_t. docs/PLATFORM.md §2.3.
+
+config DSC_OTA_FORCE_CHECK_ON_BOOT
+    bool "Check for OTA update immediately on boot (dev convenience)"
+    default n
+    help
+        Skips the randomised daily-check wait for the first check this
+        boot. Never set in a production profile.
+
+config DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT
+    bool "Force the post-OTA health gate to time out (test only)"
+    default n
+    help
+        Suppresses the HEALTH_COND_BOOT_COMPLETE report so the health gate
+        can never reach PASS, only TIMED_OUT after its window -- exists
+        solely to exercise the automatic-rollback path on real hardware
+        (docs/ROADMAP.md Tier 7's rollback proof). Must never be enabled
+        in a shipping build -- tools/check_release.py fails a production
+        profile that has this set.
+
+config DSC_DENON_DEBUG_CONSOLE
+    bool "Start a UART debug console for exercising svc_denon (dev convenience)"
+    default n
+    help
+        docs/ROADMAP.md Phase 3's "crude debug UI" bullet, implemented as
+        an esp_console REPL over UART instead of on-screen text -- no
+        hal_display/LVGL bring-up exists yet (Phase 5 scope). Commands:
+        denon status|host|power|volume|mute|input|mode|fuzz. Not a
+        production feature -- tools/check_release.py fails a production
+        profile that has this set, same as DSC_FACTORY_TEST.
+
+config DSC_DENON_SELFTEST
+    bool "Run a scripted svc_denon self-test after boot (test only)"
+    default n
+    help
+        Once the link reaches CONNECTED_TELNET/CONNECTED_HTTP, submits a
+        scripted sequence of real intents (power/input/volume/mute/mode,
+        including a request above volume_limit_max to prove the safety
+        clamp holds) through the real intent queue, then a fuzzed burst of
+        volume intents -- docs/ROADMAP.md Phase 3's exit criterion, on real
+        hardware. Exists because scripting interactive console input over
+        this board's native USB-CDC port proved unreliable from Windows;
+        this needs only read-only UART capture to verify. Must never be
+        enabled in a shipping build -- tools/check_release.py fails a
+        production profile that has this set, same as DSC_FACTORY_TEST.
+
 endmenu

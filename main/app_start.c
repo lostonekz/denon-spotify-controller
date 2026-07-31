@@ -5,6 +5,13 @@
 
 #include "app_wiring.h"
 
+#ifdef CONFIG_DSC_DENON_DEBUG_CONSOLE
+#include "debug_console.h"
+#endif
+#ifdef CONFIG_DSC_DENON_SELFTEST
+#include "denon_selftest.h"
+#endif
+
 static const char *TAG = "app_start";
 
 /* The one static app_ctx_t for the life of the device (ARCHITECTURE.md
@@ -14,6 +21,21 @@ static app_ctx_t g_ctx;
 void app_start(void)
 {
     if (app_wiring_create(&g_ctx)) {
+#ifdef CONFIG_DSC_DENON_DEBUG_CONSOLE
+        /* docs/ROADMAP.md Phase 3's "crude debug UI," as a UART console --
+         * debug_console.c is only even compiled into the binary when this
+         * Kconfig flag is set (main/CMakeLists.txt), and
+         * tools/check_release.py refuses a production profile with it on. */
+        if (!debug_console_start(&g_ctx)) {
+            ESP_LOGE(TAG, "debug_console_start failed (non-fatal, continuing)");
+        }
+#endif
+#ifdef CONFIG_DSC_DENON_SELFTEST
+        /* docs/ROADMAP.md Phase 3 Tier 6: scripted real-hardware exercise,
+         * only compiled in behind this flag -- see Kconfig.projbuild's
+         * help text for why this exists instead of interactive testing. */
+        denon_selftest_start(&g_ctx);
+#endif
         return;
     }
 

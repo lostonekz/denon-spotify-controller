@@ -98,10 +98,17 @@ void svc_diagnostics_report_tick(svc_diagnostics_t *d)
 {
     d->report_count++;
 
-    ESP_LOGI(TAG, "heap: free=%u min_free=%u psram_free=%u",
+    /* free/min_free (esp_get_free_heap_size()/esp_get_minimum_free_heap_size())
+     * are MALLOC_CAP_DEFAULT -- internal SRAM and PSRAM combined. MEMORY.md
+     * §1 budgets internal SRAM specifically (the scarce ~512 KB resource,
+     * not the 8 MB of PSRAM), so it needs its own number, not a difference
+     * of the other two. */
+    ESP_LOGI(TAG, "heap: free=%u min_free=%u psram_free=%u internal_free=%u internal_free_min=%u",
              (unsigned)esp_get_free_heap_size(),
              (unsigned)esp_get_minimum_free_heap_size(),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
 
     static TaskStatus_t tasks[DIAG_MAX_TASKS];
     UBaseType_t n = uxTaskGetSystemState(tasks, DIAG_MAX_TASKS, NULL);

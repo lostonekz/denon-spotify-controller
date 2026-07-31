@@ -131,6 +131,12 @@ denon_codec_status_t denon_mv_format(uint16_t half_db, char *buf, size_t buflen)
     return DENON_CODEC_OK;
 }
 
+uint16_t denon_clamp_volume(uint16_t requested_half_db, uint16_t limit_half_db)
+{
+    uint16_t limit = limit_half_db < DENON_MV_HALF_DB_MAX ? limit_half_db : DENON_MV_HALF_DB_MAX;
+    return requested_half_db < limit ? requested_half_db : limit;
+}
+
 void denon_mv_to_display(uint16_t half_db, char *buf, size_t buflen)
 {
     if (buf == NULL || buflen < 6) {
