@@ -1,0 +1,8 @@
+dependencies:
+  idf: ">=5.4"
+  # The real, official ST7701 driver (RGB-interface variant) -- not a
+  # hand-rolled SPI init sequence.
+  espressif/esp_lcd_st7701: "^2.0.2"
+  # esp_lcd_new_panel_io_3wire_spi() -- the 3-wire SPI panel IO used to
+  # send ST7701's init commands before RGB scanout takes over.
+  espressif/esp_lcd_panel_io_additions: "^1.0.1"

@@ -222,7 +222,12 @@ bool debug_console_start(app_ctx_t *ctx)
     esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
     repl_config.prompt              = "dsc>";
-    repl_config.max_cmdline_length = 128;
+    /* Phase 5 Tier -1: was 128 -- spotify_service_state.h's own
+     * SPOTIFY_CTRL_CMD_ARG_MAX (600, "CODE_PASTED needs the full pasted
+     * redirect URL") never actually reached, since the REPL truncated
+     * every real pairing paste long before it got there. 768 clears 600
+     * with real margin, not just enough for one observed URL length. */
+    repl_config.max_cmdline_length = 768;
     /* Interactive dev tooling, not application work -- deliberately below
      * every real task's priority (ARCHITECTURE.md §4's table), so it never
      * contends with actual service logic. ESP_CONSOLE_REPL_CONFIG_DEFAULT()'s

@@ -21,9 +21,11 @@ void intent_dispatch_tick_trampoline(void *ctx);
 /* Phase 4: svc_ota already publishes OTA_EVT_PROGRESS/OTA_EVT_FAILED (no
  * new OTA-side publish path needed, verified directly against
  * svc_ota_download.c/svc_ota.c) -- the first PROGRESS seen while not
- * already suspended calls svc_artwork_suspend(); FAILED calls
- * svc_artwork_resume(). A successful download never needs an explicit
- * resume -- applying the update reboots the device. */
+ * already suspended calls svc_artwork_request_suspend(); FAILED calls
+ * svc_artwork_request_resume() -- requests, not direct calls, since
+ * suspend/resume are task-owned by "artwork" itself (Phase 5 Tier -1).
+ * A successful download never needs an explicit resume -- applying the
+ * update reboots the device. */
 void ota_artwork_relay_tick_trampoline(void *ctx);
 
 #endif /* APP_WIRING_TICKS_H */

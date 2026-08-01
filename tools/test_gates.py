@@ -100,11 +100,11 @@ def mut_pins(root):
     p = os.path.join(root, "components", "bsp_board", "include", "bsp_pins.h")
     with open(p, encoding="utf-8") as fh:
         txt = fh.read()
-    txt = txt.replace("#define BSP_TOUCH_INT           GPIO_NUM_38",
-                      "#define BSP_TOUCH_INT           GPIO_NUM_21")  # == PCLK
+    txt = txt.replace("#define BSP_LCD_SPI_SCK         GPIO_NUM_2",
+                      "#define BSP_LCD_SPI_SCK         GPIO_NUM_41")  # == PCLK
     with open(p, "w", encoding="utf-8") as fh:
         fh.write(txt)
-    return "touch INT collides with LCD PCLK"
+    return "LCD SPI SCK collides with LCD PCLK"
 
 
 def mut_pins_native_usb(root):
@@ -116,8 +116,8 @@ def mut_pins_native_usb(root):
     p = os.path.join(root, "components", "bsp_board", "include", "bsp_pins.h")
     with open(p, encoding="utf-8") as fh:
         txt = fh.read()
-    txt = txt.replace("#define BSP_LCD_G1              GPIO_NUM_42",
-                      "#define BSP_LCD_G1              GPIO_NUM_20")
+    txt = txt.replace("#define BSP_LCD_B1              GPIO_NUM_45",
+                      "#define BSP_LCD_B1              GPIO_NUM_20")
     with open(p, "w", encoding="utf-8") as fh:
         fh.write(txt)
     return "LCD data line reassigned onto native USB D+ (GPIO 20)"

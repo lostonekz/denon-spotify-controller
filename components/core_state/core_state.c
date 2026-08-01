@@ -21,6 +21,7 @@ static domain_slot_t domain_slot(core_state_t *s, domain_id_t domain)
     case DOMAIN_DENON:    return (domain_slot_t){ &s->state.denon,    sizeof(s->state.denon) };
     case DOMAIN_POWER:    return (domain_slot_t){ &s->state.power,    sizeof(s->state.power) };
     case DOMAIN_OTA:      return (domain_slot_t){ &s->state.ota,      sizeof(s->state.ota) };
+    case DOMAIN_UI:       return (domain_slot_t){ &s->state.ui,       sizeof(s->state.ui) };
     case DOMAIN_COUNT:
     default:              return (domain_slot_t){ NULL, 0 };
     }

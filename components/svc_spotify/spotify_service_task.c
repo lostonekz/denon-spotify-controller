@@ -10,6 +10,7 @@
 #include "esp_log.h"
 
 #include "spotify_avr_match.h"
+#include "spotify_intent_ack.h"
 #include "spotify_poll_policy.h"
 
 static const char *TAG = "svc_spotify";
@@ -118,10 +119,25 @@ static void handle_ctrl_cmd(svc_spotify_t *s, const spotify_ctrl_cmd_t *cmd)
     }
 }
 
+/* Phase 5 Tier -1: closes a real gap -- Phase 4's own plan called for
+ * svc_spotify to publish TOPIC_INTENT_ACK, but a repo-wide search found the
+ * type and topic policy wired and zero publishers anywhere. Without this,
+ * EVENTS_AND_STATE.md §6.3's optimistic-UI protocol (a Now Playing tap
+ * renders pending immediately) only ever resolves via its 3s abandon
+ * timeout, never the fast, explicit path the mechanism exists for. */
+static void publish_intent_ack(svc_spotify_t *s, uint32_t seq, intent_ack_evt_kind_t kind)
+{
+    event_t evt = { .topic = TOPIC_INTENT_ACK };
+    evt.u.intent_ack.seq  = seq;
+    evt.u.intent_ack.kind = kind;
+    core_eventbus_publish(s->bus, &evt);
+}
+
 static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
 {
     spotify_api_cmd_t cmd;
     if (spotify_intent_to_cmd(intent, &cmd) != SPOTIFY_INTENT_RESULT_OK) {
+        publish_intent_ack(s, intent->seq, INTENT_ACK_EVT_REJECTED);
         return;
     }
 
@@ -129,6 +145,7 @@ static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
     if (r == SPOTIFY_API_RESULT_UNAUTHORIZED) {
         s->state.access_token_refresh_due_us = s->clock.now_us(s->clock.ctx);   /* force a refresh now */
     }
+    publish_intent_ack(s, intent->seq, spotify_intent_ack_kind_for_result(r));
 
     /* Force-poll at +250ms/+1s after any intent, per NETWORKING.md §1.3's
      * table -- converges the UI quickly rather than waiting for the next
@@ -168,6 +185,12 @@ static void handle_poll_result(svc_spotify_t *s, spotify_api_result_t r, const p
     if (r == SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE) {
         playback_state_t empty = { .device_is_avr = DEVICE_IS_AVR_UNKNOWN };
         core_state_write(s->state_store, DOMAIN_PLAYBACK, LINK_STATUS_OK, &empty, sizeof(empty));
+        /* Phase 5 Tier -1: this transition was previously silent -- only
+         * the "something is playing" branch below ever published. Stop
+         * playback entirely and nothing downstream (svc_artwork, Phase
+         * 5's UI) ever learned playback had stopped, so stale
+         * metadata/artwork stuck on screen forever. */
+        publish_playback_event(s, &empty);
     } else {
         playback_state_t resolved = *pb;
 
@@ -220,6 +243,14 @@ void spotify_service_tick(svc_spotify_t *s)
     }
 
     if (spotify_session_fsm_current_state(&s->state.session_fsm) != SPOTIFY_SESSION_FSM_STATE_AUTHORIZED) {
+        /* Phase 5 Tier -1: no access token to act with -- drain and reject
+         * rather than leaving a posted intent stuck un-acked until
+         * whenever re-auth happens (which may be indefinite). The queue
+         * used to be left entirely untouched here. */
+        intent_t stuck;
+        while (xQueueReceive(s->playback_intent_queue, &stuck, 0) == pdTRUE) {
+            publish_intent_ack(s, stuck.seq, INTENT_ACK_EVT_REJECTED);
+        }
         return;   /* nothing else below needs a valid access token */
     }
 

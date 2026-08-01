@@ -35,12 +35,18 @@ denon-spotify-controller/
 │   │   ├── include/bsp_board.h
 │   │   ├── bsp_board.c
 │   │   ├── bsp_pins.h                  # every GPIO number in the project, once
-│   │   └── bsp_io_expander.c           # CH422G/TCA9554 behind a tiny API
+│   │   └── bsp_io_expander.c           # CH32V003 custom-firmware expander behind a tiny API
+│   │                                     # (NOT a CH422G/TCA9554 -- an early guess, wrong;
+│   │                                     # see bsp_io_expander.h's own top comment)
 │   │
-│   ├── hal_display/                    # esp_lcd RGB panel + ST7701 init sequence
-│   ├── hal_touch/                      # GT911 -> normalised touch events
-│   ├── hal_backlight/                  # LEDC PWM + gamma-corrected ramping
-│   ├── hal_imu/                        # QMI8658 (tap/knock detection, optional)
+│   ├── hal_display/                    # esp_lcd RGB panel + real ST7701 init sequence;
+│   │                                     # 1 framebuffer + LV_DISPLAY_RENDER_MODE_PARTIAL,
+│   │                                     # not 2 + full-frame -- see RISKS.md R1
+│   ├── hal_touch/                      # GT911 -> normalised touch events, dual-address
+│   │                                     # probe (no INT pin exists on this board)
+│   ├── hal_backlight/                  # binary on/off via the IO expander's real PWM
+│   │                                     # register (REG_PWM) -- not LEDC, this board has
+│   │                                     # no dedicated backlight GPIO at all
 │   │
 │   ├── core_eventbus/                  # topic pub/sub over FreeRTOS queues
 │   ├── core_state/                     # snapshot store, per-domain versioning
@@ -145,10 +151,12 @@ restart policy, degraded-mode rules, and coredump retention and export.
 
 | Module | Responsibility |
 |---|---|
-| `bsp_board` | Bring up I²C, the IO expander, power rails, and reset lines in the correct order. Publish a board descriptor. The only file that knows this is a Waveshare board. |
-| `hal_display` | ST7701 init sequence, `esp_lcd_rgb_panel` config, framebuffer + bounce-buffer allocation, VSYNC callback. |
-| `hal_touch` | GT911 over I²C on an interrupt, with an I²C-error recovery path (this chip does wedge). |
-| `hal_backlight` | LEDC PWM, gamma-corrected duty, non-blocking ramp. |
-| `hal_imu` | QMI8658 read + knock/tap detection. Optional; behind a Kconfig flag. |
+| `bsp_board` | Bring up I²C, the CH32V003 IO expander, power rails, and reset lines in the correct order (one combined LCD+touch reset/power-up sequence, not independent per-driver pulses). Publish a board descriptor. The only file that knows this is a Waveshare board. |
+| `hal_display` | Real ST7701 init command sequence (not the driver's generic default), `esp_lcd_rgb_panel` config (1 framebuffer, `LV_DISPLAY_RENDER_MODE_PARTIAL` — see [RISKS.md](RISKS.md) R1), bounce-buffer allocation, VSYNC callback. |
+| `hal_touch` | GT911 over I²C, dual-address probe (0x5D then 0x14) — the real board wires no INT pin at all, so there's no interrupt-driven read and no address-strapping. |
+| `hal_backlight` | Binary on/off via the IO expander's own PWM register (real dimming is possible on this hardware — see [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §7 — just not exposed as a feature yet). |
+
+No IMU on this board (`hal_imu` doesn't exist as a component) — confirmed against the real
+vendor hardware reference (`BSP_CAPS_IMU=0`), not left unbuilt by choice.
 
 ---

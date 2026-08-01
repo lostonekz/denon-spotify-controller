@@ -9,6 +9,12 @@
  * No SEEK: NETWORKING.md §1.3's endpoint list omits `PUT .../seek`
  * entirely, and no scrub UI exists until Phase 5 -- cut explicitly, not
  * silently dropped (Phase 4 plan §5).
+ *
+ * playback_intent_kind_t/playback_intent_payload_t moved to core_types
+ * (Phase 5 Tier 6: `ui` needs these exact values to submit PLAY/PAUSE/
+ * NEXT/PREVIOUS and may not include this, a forbidden svc_* header) --
+ * this file includes them as its own canonical definition, unchanged in
+ * every other way.
  */
 #ifndef SPOTIFY_INTENT_H
 #define SPOTIFY_INTENT_H
@@ -17,28 +23,11 @@
 #include <stdint.h>
 
 #include "intent_types.h"
+#include "playback_intent_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* intent_t.kind when intent_t.domain == INTENT_DOMAIN_PLAYBACK. */
-typedef enum {
-    PLAYBACK_INTENT_PLAY = 0,
-    PLAYBACK_INTENT_PAUSE,
-    PLAYBACK_INTENT_NEXT,
-    PLAYBACK_INTENT_PREVIOUS,
-    PLAYBACK_INTENT_SET_SHUFFLE,
-    PLAYBACK_INTENT_SET_REPEAT,
-    PLAYBACK_INTENT_SET_VOLUME,
-} playback_intent_kind_t;
-
-/* Packed into intent_t.payload (16 B, plenty of room). */
-typedef struct {
-    uint8_t volume_pct;    /* PLAYBACK_INTENT_SET_VOLUME -- 0-100, clamped by this file */
-    bool    shuffle;       /* PLAYBACK_INTENT_SET_SHUFFLE */
-    uint8_t repeat_mode;   /* PLAYBACK_INTENT_SET_REPEAT -- matches playback_state_t's representation */
-} playback_intent_payload_t;
 
 /* What spotify_api.c (Tier 2) actually executes -- one command kind per
  * endpoint this project uses (NETWORKING.md §1.3's list). */

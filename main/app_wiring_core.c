@@ -55,6 +55,18 @@ bool app_wiring_create_bus(app_ctx_t *ctx, os_lock_if_t bus_lock)
         .topic = TOPIC_INTENT_ACK, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
         .on_release = NULL, .release_ctx = NULL,
     };
+    /* Phase 5 Tier 6: EVENTS_AND_STATE.md §5.3's own table already specced
+     * this (depth 4, drop-newest) but nothing had registered it -- w_toast
+     * (components/ui) is the first real subscriber
+     * (view_model_now_playing_apply_init()). Without this entry that
+     * subscribe() call fails (core_eventbus_subscribe()'s own contract:
+     * "topic has no entry in topic_policies"), which fails ui_app_create(),
+     * which fails app_wiring_create_ui() -- i.e. this is boot-fatal, not a
+     * cosmetic gap. */
+    ctx->bus_topic_policies[10] = (topic_policy_t){
+        .topic = TOPIC_TOAST, .depth = 4, .on_full = EVENT_OVERFLOW_DROP_NEWEST,
+        .on_release = NULL, .release_ctx = NULL,
+    };
     core_eventbus_init(&ctx->bus, ctx->bus_subs, APP_EVENTBUS_MAX_SUBS,
                         ctx->bus_topic_policies, APP_EVENTBUS_TOPIC_POLICIES,
                         bus_lock);

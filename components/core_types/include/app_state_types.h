@@ -44,6 +44,15 @@ typedef enum {
     DOMAIN_DENON,
     DOMAIN_POWER,
     DOMAIN_OTA,
+    DOMAIN_UI,               /* Phase 5: owned/written by `ui` alone -- a legal ui->core
+                                * edge. R10 wants a dropped-frame counter always running,
+                                * R17 wants svc_diagnostics to count unrepresentable-glyph
+                                * events, but `ui` may not depend on any svc_* component
+                                * and the bus's documented direction is services->UI, not
+                                * the reverse -- this domain plus an app_wiring relay into
+                                * svc_diagnostics's periodic report is the mechanism,
+                                * mirroring the existing TOPIC_SETTINGS->svc_denon /
+                                * TOPIC_OTA->svc_artwork relay pattern. */
     DOMAIN_COUNT,           /* not a real domain -- array-sizing sentinel */
 } domain_id_t;
 
@@ -123,6 +132,15 @@ typedef struct {
     domain_meta_t    meta;
     artwork_handle_t handle;      /* {0,0} means "no artwork" */
     uint32_t         dominant_color_rgb565;
+    char             track_id[PLAYBACK_TRACK_ID_MAX];   /* Phase 5: which track this handle
+                                                           * is for, zero-means-absent. svc_artwork
+                                                           * already discards a stale in-flight
+                                                           * *fetch* at publish time, but a reader
+                                                           * across an async boundary (the UI) has
+                                                           * no other way to positively confirm
+                                                           * "this artwork is for the track I'm
+                                                           * currently showing" vs. a second track
+                                                           * change racing ahead of render. */
 } artwork_state_t;
 
 typedef struct {
@@ -147,6 +165,19 @@ typedef struct {
     uint32_t      running_build;
 } ota_state_t;
 
+/* Phase 5: `ui`'s own diagnostics, relayed by app_wiring into
+ * svc_diagnostics's existing periodic UART report (DOMAIN_UI's own top
+ * comment explains why this domain exists rather than a direct call).
+ * Counters, not rates -- svc_diagnostics already has the cadence to turn a
+ * counter into a rate for its report; duplicating that math here would be
+ * a second place to get it wrong. */
+typedef struct {
+    domain_meta_t meta;
+    uint32_t      frames_rendered;
+    uint32_t      frames_dropped;
+    uint32_t      unrepresentable_glyph_count;   /* R17 */
+} ui_diag_state_t;
+
 typedef struct {
     net_state_t      net;
     spotify_state_t  spotify;
@@ -155,6 +186,7 @@ typedef struct {
     denon_state_t    denon;
     power_state_t    power;
     ota_state_t      ota;
+    ui_diag_state_t  ui;
 } app_state_t;
 
 #ifdef __cplusplus

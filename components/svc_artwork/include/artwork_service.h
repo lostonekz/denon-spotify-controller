@@ -22,17 +22,28 @@
  * Handle ownership contract: see artwork_cache.h's own top comment.
  * on_release for TOPIC_ARTWORK is NULL (app_wiring, Tier 4) -- this
  * service alone releases handles, on its own schedule.
+ *
+ * Phase 5 Tier -1: suspend()/resume() are task-owned (see
+ * svc_artwork_request_suspend/resume below) -- a review pass found that
+ * calling them directly from a different task's context (the OTA relay's)
+ * could free a->jpeg_staging while this task's own handle_track_change()
+ * was still fetching into or decoding from it, a race no cache-level mutex
+ * can close (that buffer sits entirely outside the cache pool). Routing
+ * suspend/resume through a request the task drains itself means they can
+ * never preempt that same task's own in-flight fetch/decode.
  */
 #ifndef ARTWORK_SERVICE_H
 #define ARTWORK_SERVICE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "artwork_pixel_types.h"   /* artwork_pixel_provider_t */
 #include "core_eventbus.h"
 #include "core_state.h"
 #include "lifecycle_types.h"
@@ -60,9 +71,16 @@ typedef struct {
                                                      * Spotify's cloud-API policy */
 } svc_artwork_cfg_t;
 
+typedef enum {
+    ARTWORK_LIFECYCLE_REQUEST_NONE = 0,
+    ARTWORK_LIFECYCLE_REQUEST_SUSPEND,
+    ARTWORK_LIFECYCLE_REQUEST_RESUME,
+} artwork_lifecycle_request_t;
+
 typedef struct {
     artwork_cache_t cache;
-    uint8_t         *jpeg_staging;   /* heap_caps_malloc'd (PSRAM); NULL while suspended */
+    uint8_t         *jpeg_staging;   /* heap_caps_malloc'd (PSRAM); NULL while suspended --
+                                        * only ever touched by the artwork task itself */
 
     eventbus_sub_h  playback_sub;
     event_t         playback_sub_storage[ARTWORK_PLAYBACK_SUB_DEPTH];
@@ -77,6 +95,12 @@ typedef struct {
     time_source_t          clock;
     net_http_t                *http;
     http_policy_t                 http_policy;
+
+    SemaphoreHandle_t             lifecycle_lock;     /* guards lifecycle_request only --
+                                                          NOT cache access (that's cache.lock) */
+    artwork_lifecycle_request_t   lifecycle_request;   /* set by svc_artwork_request_suspend/
+                                                          resume (any task), drained once per
+                                                          artwork-task loop iteration */
 
     TaskHandle_t         task_handle;
     volatile bool           task_should_stop;
@@ -94,13 +118,25 @@ typedef struct {
 bool svc_artwork_restart(void *restart_ctx, void **out_handle);
 service_desc_t svc_artwork_service_desc(svc_artwork_restart_ctx_t *restart_ctx);
 
-/* Wired to the OTA-coexistence relay (app_wiring, Tier 4) -- PLATFORM.md
- * §2.4: actually frees the pool's backing memory, not just pauses
- * fetches. suspend() clears artwork_state_t.handle and publishes
- * ARTWORK_EVT_FAILED BEFORE freeing -- see artwork_cache.h's ownership
- * contract for why the ordering matters. resume() reallocates fresh. */
-bool svc_artwork_suspend(svc_artwork_t *a);
-bool svc_artwork_resume(svc_artwork_t *a);
+/* Requests the artwork task suspend/resume itself at its own next loop
+ * iteration -- PLATFORM.md §2.4: suspend actually frees the pool's backing
+ * memory (and jpeg_staging), not just pauses fetches; resume reallocates
+ * fresh. Safe to call from any task (this is the ONLY safe way to trigger
+ * suspend/resume from outside the artwork task -- see this file's top
+ * comment). Wired to the OTA-coexistence relay (app_wiring, Tier 4). A
+ * request overwrites a not-yet-drained prior request of a different kind;
+ * today's only caller already avoids issuing a redundant same-kind request
+ * (app_wiring_ticks.c's artwork_suspended_for_ota guard). */
+void svc_artwork_request_suspend(svc_artwork_t *a);
+void svc_artwork_request_resume(svc_artwork_t *a);
+
+/* Fills an artwork_pixel_provider_t backed by this service's cache -- hand
+ * this to ui_app's construction config (app_wiring, Tier 4) so `ui` never
+ * needs to include any svc_artwork header (Phase 5 plan §1). The returned
+ * struct's ctx points at `a` itself; `a` must outlive every use of it,
+ * which holds for the service's whole lifetime including across a
+ * suspend/resume cycle (lock_copy() just returns false while suspended). */
+artwork_pixel_provider_t svc_artwork_pixel_provider(svc_artwork_t *a);
 
 #ifdef __cplusplus
 }

@@ -168,6 +168,28 @@ static void test_slot_out_of_range_handle_rejected(void)
     TEST_ASSERT_NULL(core_pool_slot_lock(&p, garbage));
 }
 
+/* Phase 5 Tier -1: the guard that makes it safe for artwork_cache_free() to
+ * hand a real, matching-generation handle to a caller after the backing
+ * storage is gone (a cross-task locker racing a suspend/free) -- a matching
+ * generation alone must not be read as "there's still memory here." */
+static void test_slot_lock_rejects_matching_generation_when_storage_is_null(void)
+{
+    uint8_t storage[SLOT_SIZE * SLOT_COUNT];
+    uint32_t generation[SLOT_COUNT];
+    int32_t free_list[SLOT_COUNT];
+    core_pool_slot_t p;
+    core_pool_slot_init(&p, storage, generation, free_list, SLOT_SIZE, SLOT_COUNT);
+
+    core_pool_handle_t h;
+    TEST_ASSERT_TRUE(core_pool_slot_acquire(&p, &h));
+    TEST_ASSERT_NOT_NULL(core_pool_slot_lock(&p, h));   /* valid before deinit */
+
+    core_pool_slot_deinit(&p);
+
+    /* Same slot, same generation -- the only thing that changed is storage. */
+    TEST_ASSERT_NULL(core_pool_slot_lock(&p, h));
+}
+
 /* ---- core_pool_ring ----------------------------------------------------- */
 
 #define RING_CAPACITY 3
@@ -263,6 +285,7 @@ int main(void)
     RUN_TEST(test_slot_exhaustion_fails_clean_and_counts);
     RUN_TEST(test_slot_stale_handle_rejected_after_reacquire);
     RUN_TEST(test_slot_out_of_range_handle_rejected);
+    RUN_TEST(test_slot_lock_rejects_matching_generation_when_storage_is_null);
     RUN_TEST(test_ring_push_pop_fifo_order);
     RUN_TEST(test_ring_full_push_fails_without_corrupting_state);
     RUN_TEST(test_ring_wraps_around_after_pop_push_cycles);

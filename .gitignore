@@ -17,9 +17,18 @@ sdkconfig.old
 # docs.
 managed_components/
 
+# tools/gen_assets.py's own Node.js dependency (lv_font_conv) -- same
+# treatment as managed_components/ above: package-lock.json is what's
+# committed and pinned, node_modules/ is fetched from it and not.
+tools/node_modules/
+
 # Host test build output
 build_host/
 build_asan/
+
+# test/ui_harness/'s own separate CMake build output (SDL host harness,
+# docs/ROADMAP.md Phase 5 Tier 5) -- same reasoning as build_host/ above.
+build_ui_harness/
 
 # tools/sign_release.py's staging output (docs/ROADMAP.md Tier 7's local
 # HTTPS server serves from here) -- a build artifact, not source.

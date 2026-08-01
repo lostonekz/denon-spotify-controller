@@ -14,9 +14,10 @@ void svc_ota_tick_trampoline(void *ctx)     { svc_ota_tick((svc_ota_t *)ctx); }
 
 /* The mediator LIFECYCLE.md §1.4 calls for: svc_supervisor owns the health-
  * gate verdict, svc_ota needs it, and svc has no self-edge -- so app_wiring
- * polls one and relays into the other. Also folds in the two gate
- * conditions that need no dedicated event source (TLS-handshake-proven,
- * heap-watermark), rather than giving each its own tick job. */
+ * polls one and relays into the other. Also folds in the gate conditions
+ * that need no dedicated event source (TLS-handshake-proven, heap-
+ * watermark, and, since Phase 5 Tier 4, the UI's first rendered frame),
+ * rather than giving each its own tick job. */
 void health_gate_relay_tick_trampoline(void *ctx)
 {
     app_ctx_t *a = (app_ctx_t *)ctx;
@@ -25,6 +26,16 @@ void health_gate_relay_tick_trampoline(void *ctx)
 
     svc_supervisor_report_health_condition(&a->supervisor, HEALTH_COND_TLS_HANDSHAKE,
                                              svc_ota_tls_handshake_proven(&a->svc_ota));
+
+    /* PLATFORM.md §2.2: "panel initialised, UI rendered >= 1 frame, touch
+     * enumerated." Init/enumeration already gate app_wiring_create_ui()
+     * itself (a hal_display_init()/hal_touch_init() failure aborts boot
+     * entirely) -- this is only the genuinely asynchronous part, re-polled
+     * every tick until ui_app_has_rendered_frame() observes the flush
+     * callback actually run, same idiom as TLS_HANDSHAKE/HEAP_WATERMARK
+     * below. */
+    svc_supervisor_report_health_condition(&a->supervisor, HEALTH_COND_PANEL_UI,
+                                             ui_app_has_rendered_frame(&a->ui_app));
 
     uint32_t baseline = svc_ota_heap_watermark_baseline(&a->svc_ota);
     uint32_t current    = esp_get_free_heap_size();
@@ -155,10 +166,16 @@ void ota_artwork_relay_tick_trampoline(void *ctx)
         }
         if (evt.u.ota.kind == OTA_EVT_PROGRESS && !a->artwork_suspended_for_ota) {
             a->artwork_suspended_for_ota = true;
-            svc_artwork_suspend(&a->svc_artwork);
+            /* Requests suspend rather than calling it directly -- this
+             * trampoline runs on a different task than "artwork"'s own,
+             * and svc_artwork_suspend()/resume() are task-owned since
+             * Phase 5 Tier -1 (see artwork_service.h's top comment: a
+             * cross-task call here could free jpeg_staging out from under
+             * an in-flight fetch/decode on the artwork task). */
+            svc_artwork_request_suspend(&a->svc_artwork);
         } else if (evt.u.ota.kind == OTA_EVT_FAILED && a->artwork_suspended_for_ota) {
             a->artwork_suspended_for_ota = false;
-            svc_artwork_resume(&a->svc_artwork);
+            svc_artwork_request_resume(&a->svc_artwork);
         }
         /* OTA_EVT_APPLIED never actually fires -- applying reboots the
          * device via esp_restart() first, so svc_artwork simply starts

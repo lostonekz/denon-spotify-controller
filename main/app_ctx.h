@@ -17,6 +17,8 @@
 #include "core_eventbus.h"
 #include "core_state.h"
 #include "denon_service.h"
+#include "hal_display.h"
+#include "hal_touch.h"
 #include "intent_types.h"
 #include "kv_store_if.h"
 #include "lifecycle_types.h"
@@ -31,6 +33,7 @@
 #include "svc_settings.h"
 #include "svc_storage.h"
 #include "svc_supervisor.h"
+#include "ui_app.h"
 
 /* Sized for real subscriber count plus headroom for later phases. Phase 2
  * adds 3 real subscriptions (svc_supervisor on TOPIC_NET+TOPIC_TIME,
@@ -40,19 +43,24 @@
  * Phase 4 adds 2 more: svc_artwork's own TOPIC_PLAYBACK subscription (legal
  * svc->core edge, no mediation needed -- see EVENTS_AND_STATE.md's artwork
  * ownership contract) and app_wiring's TOPIC_OTA subscription for the
- * OTA<->artwork coexistence relay. Not a hard architectural limit, raise it
- * when a real subscriber needs more room. */
+ * OTA<->artwork coexistence relay. Phase 5 Tier 6 adds 5 more, all owned by
+ * view_model_now_playing_apply_t (a legal ui->core edge, same reasoning as
+ * svc_artwork's own direct subscription): TOPIC_PLAYBACK/TOPIC_ARTWORK/
+ * TOPIC_DENON/TOPIC_INTENT_ACK/TOPIC_TOAST. Not a hard architectural limit,
+ * raise it when a real subscriber needs more room. */
 #define APP_EVENTBUS_MAX_SUBS       14
 /* TOPIC_SETTINGS/TOPIC_DIAG (Phase 1) + TOPIC_NET/TOPIC_TIME/TOPIC_OTA
  * (Phase 2) + TOPIC_DENON (Phase 3) + TOPIC_PLAYBACK/TOPIC_SPOTIFY/
- * TOPIC_ARTWORK/TOPIC_INTENT_ACK (Phase 4). */
-#define APP_EVENTBUS_TOPIC_POLICIES 10
+ * TOPIC_ARTWORK/TOPIC_INTENT_ACK (Phase 4) + TOPIC_TOAST (Phase 5 Tier 6 --
+ * w_toast's real consumer, view_model_now_playing_apply_t). */
+#define APP_EVENTBUS_TOPIC_POLICIES 11
 
 /* Every service that has a service_desc_t: Phase 1's storage/scheduler/
  * logging/settings/diagnostics (5) + Phase 2's net_wifi/net_time/net_http/
  * svc_ota (4) + Phase 3's svc_denon (1) + Phase 4's svc_spotify/svc_artwork
- * (2). Grows as later phases add services. */
-#define APP_SUPERVISOR_MAX_SERVICES 12
+ * (2) + Phase 5's hal_display/hal_touch/ui (3). Grows as later phases add
+ * services. */
+#define APP_SUPERVISOR_MAX_SERVICES 15
 
 /* EVENTS_AND_STATE.md §5.3's documented (but, until Phase 3, unbuilt)
  * TOPIC_INTENT policy: depth 16, drop newest + count it. intent_t does not
@@ -130,6 +138,15 @@ typedef struct {
     event_t                ota_artwork_relay_sub_storage[4];
     scheduler_job_h           ota_artwork_relay_tick_job;
     bool                        artwork_suspended_for_ota;
+
+    /* --- ui (Phase 5): bsp_board itself owns no ctx-held handle (a
+     * singleton behind bsp_board_i2c_bus()/bsp_board_io_expander(), safe to
+     * call bsp_board_init() more than once -- bsp_board.h). hal_backlight
+     * is likewise stateless (just the shared expander + a bool). ui_app_t
+     * embeds ui_router_t itself (ui_app.h) -- no separate router field. --- */
+    hal_display_t          hal_display;
+    hal_touch_t               hal_touch;
+    ui_app_t                    ui_app;
 
     /* --- lifecycle --- */
     service_desc_t       service_descs[APP_SUPERVISOR_MAX_SERVICES];

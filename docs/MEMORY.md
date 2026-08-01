@@ -13,13 +13,13 @@ Target: ESP32-S3 N16R8 — 8 MB octal PSRAM, ~512 KB internal SRAM, 16 MB flash.
 
 | Allocation | Size | Notes |
 |---|---|---|
-| LCD framebuffers, 2 × 480×480×2 | 900 KiB | owned by `esp_lcd_rgb_panel` |
-| LVGL heap (dedicated pool) | 512 KiB | `LV_STDLIB_CUSTOM` onto our own pool |
+| LCD framebuffer, 1 × 480×480×2 | 450 KiB | owned by `esp_lcd_rgb_panel` — 1 buffer, not 2; see §3 |
+| LVGL heap (PSRAM pool) | 2048 KiB | added via `lv_mem_add_pool()`; see §3 for why 512 KiB wasn't enough |
 | Artwork slots, 3 × 320×320×2 | 600 KiB | current / incoming / outgoing (crossfade) |
 | Artwork thumbs, 3 × 60×60×2 | 21 KiB | blurred backdrop + palette source |
 | JPEG staging buffer | 96 KiB | one decode at a time |
 | Log ring, diagnostics | 16 KiB | |
-| **Total** | **~2.1 MiB** | **~5.9 MiB headroom** |
+| **Total** | **~3.16 MiB** | **~4.85 MiB headroom** |
 
 That headroom is deliberate. It is what makes years of feature additions possible without
 re-architecting the memory plan.
@@ -47,6 +47,7 @@ JPEG section now measures (`components/spike_phase0/spike_load_tasks.c`).
 | Allocation | Size |
 |---|---|
 | RGB bounce buffers, 2 × 480×20×2 | 38 KiB |
+| LVGL heap (static internal pool) | 24 KiB |
 | WiFi + LWIP | ~60 KiB |
 | mbedTLS, 2 concurrent sessions | ~50 KiB (tuned, §4) |
 | Task stacks | ~50 KiB |
@@ -54,6 +55,17 @@ JPEG section now measures (`components/spike_phase0/spike_load_tasks.c`).
 
 Internal SRAM, not PSRAM, is what this design is actually rationed against. Every decision
 below that looks conservative is conservative about this table.
+
+The LVGL row above is small on purpose but not tiny: `lv_init()`'s own bootstrap (default
+display/group/style-cache setup) needs real headroom in this pool before `ui_app.c` ever gets
+a chance to add the real 2 MiB PSRAM pool from §1 — real hardware (Phase 5 Tier 7) found
+Kconfig's own stated 2 KiB floor genuinely too small for `lv_init()` to even return, not just
+too small for later widget work; 24 KiB gives that bootstrap real margin. `ui_app`'s own 12
+KiB task stack is deliberately excluded from the "Task stacks" row above and from this
+table's internal-SRAM total: real hardware found the internal-SRAM budget too tight for it by
+the time `ui_app_create()` runs last in boot order, so it's PSRAM-backed instead
+(`xTaskCreatePinnedToCoreWithCaps()`, `MALLOC_CAP_SPIRAM`) — the TCB itself still lands in
+internal RAM automatically, only the stack moved. See §3.
 
 ---
 
@@ -77,7 +89,7 @@ The honest rule, which is enforceable:
 |---|---|---|---|
 | Application long-lived | `app_start()` only | fixed at boot | heap hook traps late allocs |
 | Application variable-lifetime | `core_pool` fixed blocks | pool size | allocation fails, counted, degrades |
-| LVGL | dedicated PSRAM pool | 512 KiB | cannot touch system heap; `lv_mem_monitor` sampled |
+| LVGL | 24 KiB static internal + 2 MiB PSRAM pool | 2072 KiB total | cannot touch system heap; `lv_mem_monitor` sampled |
 | ESP-IDF network stacks | system heap | **not ours** | budgeted by measurement, not by rule |
 | OTA | system heap, task-scoped | ~50 KiB, artwork suspended first | peak is *lower* than steady state |
 
@@ -158,10 +170,9 @@ against.** The contention question doesn't go away, but it changes from somethin
 away at compile time to something the Phase 0 spike is positioned to measure directly —
 which is the right place for that question to be answered.
 
-**Phase 0 measured this on real hardware under real combined load, and the decision is made:
-60 Hz, 2 framebuffers, 20-row (38 KiB) bounce buffers, WiFi/LWIP preferring PSRAM — the §1
-table above and the original settings, all unchanged.** Real network load (not the
-silently-idle version an earlier acceptance was wrongly based on — see
+**Phase 0 measured this on real hardware under real combined load, and a decision was made:
+60 Hz, 2 framebuffers, 20-row (38 KiB) bounce buffers, WiFi/LWIP preferring PSRAM.** Real
+network load (not the silently-idle version an earlier acceptance was wrongly based on — see
 [RISKS.md](RISKS.md) R1) puts the drop rate at **6.7–7.1%**. Five different levers were
 tried against that real number and none moved it meaningfully: larger bounce buffers, three
 refresh rates (30/50/60 Hz), JPEG decode at the lowest task priority, and moving WiFi/LWIP
@@ -170,10 +181,48 @@ within run-to-run noise). Per-task attribution rules out JPEG decode and NVS wri
 direct cause. The likely remaining source is WiFi's own baseline presence (association,
 beacon reception), not any single load task — but with no tested lever changing the number,
 **accepted at a 10% budget** rather than the original 0.1% target or the too-optimistic 2.0%
-one, set with real margin above the observed range. Full history in
-[RISKS.md](RISKS.md) R1. The one fallback never tried (single framebuffer with partial
-refresh) is a bandwidth-side lever like the others that were, and the evidence points away
-from bandwidth as the cause.
+one, set with real margin above the observed range. Full history in [RISKS.md](RISKS.md) R1.
+
+**That 2-framebuffer part of the decision was later reversed, for real, on real hardware —
+this is not the Phase 0 measurement above being wrong, it's Phase 5 Tier 7 finding a second,
+different problem the Phase 0 spike never exercised.** The one fallback this section
+previously called "never tried... evidence points away from bandwidth as the cause" (single
+framebuffer with partial refresh) WAS tried once the real full application (15 services, the
+real widget tree, `svc_diagnostics`'s own periodic reporting) existed — and it was a real,
+necessary part of fixing a periodic on-screen corruption/vertical-shift symptom, alongside a
+genuinely different root cause (a scheduler-freezing diagnostics call, nothing to do with
+PSRAM bandwidth) that the Phase 0 spike had no equivalent of and so could never have
+surfaced. **Current, real settings: 30 Hz, 1 framebuffer, `LV_DISPLAY_RENDER_MODE_PARTIAL`
+with a 40-row LVGL-owned draw buffer, 20-row (38 KiB) bounce buffers unchanged.** The 30 Hz
+figure is itself a later correction (performance sweep, 2026-08-01): the first 30 Hz attempt
+was retried and found worse at the time, but that result was confounded by the same
+scheduler-freeze bug fixed in this same tier — once fixed, a clean re-test on real hardware
+found 30 Hz visually indistinguishable from 60 Hz, so it was kept for the PSRAM-bandwidth
+headroom it frees up. Full account in [RISKS.md](RISKS.md) R1's own Phase 5 Tier 7 update and
+its performance-sweep follow-up, including why none of this overturns the original
+6.7–7.1%/WiFi-baseline finding above.
+
+**Why the LVGL pool grew from 512 KiB to 2 MiB (PSRAM) + 24 KiB (static internal), a real
+finding, not a redesign:** the original 512 KiB figure was never actually wired up as a real
+pool — `ui_app.c` only ever called `lv_init()` and nothing else, so LVGL ran on whatever tiny
+static pool Kconfig's `LV_MEM_SIZE_KILOBYTES` happened to be set to. Real hardware exposed
+this in two stages. First, the very first real render (the Art-forward Now Playing screen's
+rounded, layered art card) permanently froze the UI task inside LVGL's own allocator —
+`LV_USE_ASSERT_MALLOC`'s default handler is a bare `while(1);` on out-of-memory, not a clean
+failure, so this looked like a hang, not an OOM. Wiring up the real PSRAM pool via
+`lv_mem_add_pool()` (as this section always intended) was the fix — sized at 2 MiB, not the
+original 512 KiB, because LVGL's software renderer composites layers (needed for the
+rounded-corner clip the Art-forward design called for) in the layer's own color format, and a
+near-full-480×480 layer at ARGB8888 (4 B/px) is ~900 KiB, comfortably over 512 KiB before
+accounting for the rest of the object tree. Second, shrinking the static internal pool all
+the way to Kconfig's stated 2 KiB floor (the original plan, so that floor wouldn't silently
+eat into the 512 KiB PSRAM budget) turned out to be too small for `lv_init()`'s own bootstrap
+to even return — 24 KiB was the real, measured fix, still far below the old unconditional
+64 KiB default. Separately, the rounded-corner clip that originally justified sizing for a
+full-screen ARGB8888 layer was later removed entirely (a real LVGL compositing-layer bug,
+not a memory problem — see [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §4's `w_art_card` entry),
+so the 2 MiB figure now has more headroom than its own original justification strictly needs;
+not shrunk back down without a reason to, since PSRAM is not the scarce resource here.
 
 ---
 

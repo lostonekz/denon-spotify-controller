@@ -32,6 +32,22 @@ def _is_build_dir(name):
 # are generated from, and splitting them would mean splitting the table.
 GENERATED_SUFFIXES = (".inc",)
 
+# Same reasoning, applied by location instead of suffix: docs/adr/0005's
+# "generated at build time... into C arrays" convention -- an assets/
+# directory holds ONLY tools/gen_assets.py output (font glyph bitmaps
+# today; icons later), never hand-written logic, so nothing under one is
+# ever a candidate for the human-readability limit this gate exists to
+# enforce. Path-based (any "assets" path segment under components/) rather
+# than a new suffix, since lv_font_conv's own output is a real, standalone
+# .c file (its own translation unit), not a .inc fragment meant to be
+# #include-d into something else.
+GENERATED_DIR_SEGMENTS = {"assets"}
+
+
+def _is_generated_dir(rel_path):
+    parts = rel_path.replace(os.sep, "/").split("/")
+    return any(p in GENERATED_DIR_SEGMENTS for p in parts[:-1])
+
 
 def count_lines(path):
     with io.open(path, encoding="utf-8", errors="replace") as fh:
@@ -49,6 +65,8 @@ def scan(root, exts, limit):
             if f.endswith(GENERATED_SUFFIXES):
                 continue
             path = os.path.join(dirpath, f)
+            if _is_generated_dir(os.path.relpath(path, root)):
+                continue
             total += 1
             n = count_lines(path)
             if n > limit:

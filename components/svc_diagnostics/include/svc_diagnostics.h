@@ -56,9 +56,16 @@ void svc_diagnostics_check_coredump_on_boot(svc_diagnostics_t *d);
  * fault log and publishes TOPIC_DIAG. */
 void svc_diagnostics_record_fault(svc_diagnostics_t *d, const char *task_name, uint32_t reason);
 
-/* Logs heap (internal + PSRAM) and per-task stack high-water-mark figures
- * over UART. Call periodically (e.g. every few seconds) via a
- * svc_scheduler periodic job posted by app_wiring. */
+/* Logs heap (internal + PSRAM) over UART every call. Also logs per-task
+ * stack high-water-mark figures, but only every DIAG_TASK_SCAN_EVERY_N_TICKS
+ * calls (svc_diagnostics.c's own top comment on that constant has the real
+ * finding behind the split: uxTaskGetSystemState() -- FreeRTOS's own API,
+ * not something this code can avoid while still using it -- suspends the
+ * entire scheduler, on both cores, for as long as its per-task stack scan
+ * takes, real hardware confirmed long enough at this tick's original every-
+ * call cadence to visibly disrupt real-time RGB panel DMA). Call
+ * periodically (e.g. every few seconds) via a svc_scheduler periodic job
+ * posted by app_wiring. */
 void svc_diagnostics_report_tick(svc_diagnostics_t *d);
 
 /* Oldest first, same contract as faultlog_load(). */

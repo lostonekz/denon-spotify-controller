@@ -117,22 +117,34 @@ typedef struct {
 
 Reusable, parameterised, no screen-specific branching inside them.
 
+This was originally a 14-widget catalogue written for a "Balanced" card-layout mock. Phase 5
+built Art-forward instead (§6) and only the 7 widgets that layout actually uses; the
+remaining 7 are real Phase 6 scope, not cut. `w_backdrop` isn't separately built at all under
+Art-forward — the full-bleed art card *is* the backdrop, so it folds into `w_art_card`.
+
+**Built, Phase 5:**
+
 | Widget | Purpose |
 |---|---|
-| `w_art_card` | Album art with rounded corners, shadow, crossfade between two artwork slots, placeholder state |
-| `w_backdrop` | Full-bleed blurred album art + scrim behind everything |
+| `w_art_card` | Full-bleed album art + integrated scrim, crossfade between two artwork slots, placeholder state. **Square corners, not rounded** — a real finding, not the original design: with rounded corners (`clip_corner`) enabled, LVGL's own compositing-layer allocator (`lv_draw_layer_alloc_buf`) never returns on this real hardware/LVGL-version combination, confirmed stuck inside `lv_tlsf.c`'s own block search, not failing or asserting, at every pool size tried. Root cause not found; `clip_corner` is off as the working fix. Filed as a real follow-up: either root-cause the layer-alloc hang, or move corner-rounding into the artwork pixel buffer itself before handing it to LVGL. The scrim itself is a flat, solid, per-track-adaptive opacity, not the vertical gradient this section originally described (§6) — RGB565's 16-bit color depth made a smooth opacity ramp visibly band on real hardware. |
 | `w_marquee_label` | Text that gently scrolls only when it overflows, pauses at each end |
-| `w_progress_bar` | Interpolated progress + elapsed/remaining, scrub-on-drag |
-| `w_transport` | Prev / play-pause / next, with the pending-state treatment |
+| `w_progress_bar` | Interpolated progress + elapsed/remaining. **Display-only, no scrub-on-drag** — `spotify_intent.h` has no SEEK intent kind and `NETWORKING.md` §1.3's endpoint list has no seek endpoint; there is nothing to wire a drag gesture to yet |
+| `w_transport` | Prev / play-pause / next, with the pending-state treatment. **No heart/favorite** — no Spotify save/favorite endpoint exists anywhere in this project's own endpoint list, so a heart icon would be a permanently-dead tap target |
+| `w_toast` | Transient bottom message, auto-dismiss, queued — `TOPIC_TOAST`'s real consumer |
+| `w_status_pill` | Small connectivity/link indicator; the honest STALE/OFFLINE surface |
+| `w_page_dots` | Pager position indicator |
+
+**Phase 6, not yet built:**
+
+| Widget | Purpose |
+|---|---|
+| `w_backdrop` | Not needed under Art-forward — see above |
 | `w_icon_toggle` | Shuffle, repeat, mute — off / on / on-with-variant (repeat-one) |
 | `w_volume_dial` | Arc drag control; used for both Spotify and Denon volume |
 | `w_volume_sheet` | Modal with dial, numeric dB, mute, safety-limit indication |
 | `w_list_row` | Label + value + optional chevron/toggle. Every settings and picker row. |
 | `w_picker` | Modal single-select list (inputs, listening modes, enum settings) |
-| `w_toast` | Transient bottom message, auto-dismiss, queued |
-| `w_status_pill` | Small connectivity/link indicator; the honest STALE/OFFLINE surface |
 | `w_qr` | QR rendering for provisioning and Spotify re-pair |
-| `w_page_dots` | Pager position indicator |
 
 Each widget owns a small `*_cfg_t` and exposes `create(parent, cfg)` plus `set_*` updaters.
 No widget reads global state or the event bus — everything arrives through its setters.
@@ -235,7 +247,7 @@ THEME_MOTION_INSTANT   100 ms  ease-out    /* press feedback        */
 THEME_MOTION_QUICK     200 ms  ease-out    /* toggles, toasts       */
 THEME_MOTION_STANDARD  320 ms  ease-in-out /* screen transitions    */
 THEME_MOTION_SLOW      600 ms  ease-in-out /* artwork crossfade     */
-THEME_MOTION_AMBIENT  1200 ms  linear      /* backdrop drift, dim   */
+THEME_MOTION_AMBIENT  1200 ms  linear      /* backdrop drift        */
 ```
 
 All animation goes through `lv_anim`. No manual per-frame timers, no `lv_refr_now()`.
@@ -246,53 +258,73 @@ than per-site tuning.
 
 ## 6. Now Playing — the screen that matters
 
+**Art-forward, not the card layout below's original "Balanced" design** — full-bleed artwork
+with overlaid controls, chosen explicitly over this section's own original mock before any
+Phase 5 build work started. This is what actually shipped:
+
 ```
 ┌────────────────────────────────────────────┐
-│  ▓▓▓ blurred artwork backdrop + scrim ▓▓▓  │
+│ (status pill, if not LIVE)          14:32  │  top overlay: clock only, no room name
+│                                            │  (no field for one exists in core_state)
+│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
+│    ▓▓▓▓▓▓▓  full-bleed album art  ▓▓▓▓▓▓▓  │  square corners, not rounded (§4)
+│    ▓▓▓▓▓▓▓  + flat adaptive scrim ▓▓▓▓▓▓▓  │  solid opacity, not a gradient (§4)
+│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
 │                                            │
-│         ┌──────────────────────┐           │
-│         │                      │           │
-│         │    album artwork     │  300 px   │
-│         │    rounded 20 px     │  card     │
-│         │                      │           │
-│         └──────────────────────┘           │
-│                                            │
-│      Track Title Goes Here                 │  40 px, marquee if long
-│      Artist Name                           │  26 px, secondary
-│                                            │
-│      ──────────●─────────────────          │  accent-tinted, scrubbable
-│      1:24                        -2:41     │  15 px, tertiary
-│                                            │
-│       ⤨       ◀◀     ⏸     ▶▶      ↻      │  56 px targets
-│                                            │
+│      Track Title Goes Here                 │  hero, marquee if long
+│      Artist Name                           │  secondary
+│      ──────────●─────────────────          │  accent-tinted, display-only (no scrub, §4)
+│      1:24                        -2:41     │  tertiary
+│         ◀◀        ⏸        ▶▶      -18dB   │  56 px targets, no heart (§4);
+│                                            │  read-only Denon volume badge, no tap handler
 │                  ● ○ ○                     │  page dots
 └────────────────────────────────────────────┘
 ```
 
-- Artwork crossfades over 600 ms on track change; the backdrop and accent colour cross-fade
-  with it. Nothing ever pops.
+- Artwork crossfades over 600 ms once a `DOMAIN_ARTWORK` update matching the current
+  track ID arrives; text/metadata update immediately on the track-changed event, ahead of
+  artwork, rather than waiting — honest about JPEG decode taking real time (RISKS.md R1),
+  not pretending it's instant.
 - The progress bar animates continuously from local interpolation, corrected smoothly on
   each poll — never a visible jump.
-- Volume is not on this screen. A swipe up (or a hardware-adjacent gesture) raises the
-  volume sheet. Keeping the primary screen calm is the whole point.
-- When `tone == STALE`, text drops to secondary and a `w_status_pill` appears. Content
-  stays visible. We degrade legibly instead of blanking.
+- The volume badge is `denon_state_t`'s own volume (Denon is the primary volume control,
+  ADR-0007) — live, read-only. Tapping it does nothing in Phase 5; `w_volume_sheet` (a modal)
+  is Phase 6.
+- When `tone == STALE` or `OFFLINE`, a `w_status_pill` appears top-left. Content stays
+  visible — we degrade legibly instead of blanking.
+- Play/pause/prev/next are optimistic: the tap dims/disables the row immediately (not a full
+  per-field state flip), then reconciles against a real `INTENT_ACK_EVT_ACCEPTED`/`REJECTED`
+  or a 3 s abandon timeout, per §6.3 of [EVENTS_AND_STATE.md](EVENTS_AND_STATE.md).
 
 ---
 
 ## 7. Power-aware rendering
 
-`svc_power` publishes state; the UI adapts rather than just dimming the backlight:
+`svc_power` publishes state; the UI adapts through content, not backlight level — see below
+for why the backlight itself has only one real transition to make.
 
 | Power state | Backlight | UI behaviour |
 |---|---|---|
-| `ACTIVE` | user setting | full 60 fps, all animation |
-| `DIM` (60 s idle) | 15 % | ambient animation only; transport hidden |
-| `ASLEEP` (300 s idle) | 0 %, panel off | LVGL timers paused, no rendering at all |
-| `NIGHT` | 3 % | monochrome clock/track, no accent colour |
+| `ACTIVE` | on | full 60 fps, all animation |
+| `DIM` (60 s idle) | on | ambient animation only; transport hidden |
+| `ASLEEP` (300 s idle) | off | LVGL timers paused, no rendering at all |
+| `NIGHT` | on | monochrome clock/track, no accent colour |
 
-- Backlight changes **always ramp** (`THEME_MOTION_AMBIENT`, gamma-corrected). An instant
-  backlight step is the single most "cheap DIY" thing a device can do.
+- **Backlight dimming is real, contrary to an earlier finding in this section** — Phase 5
+  Tier 3's original hal_backlight bring-up concluded the backlight was binary-only because it
+  assumed the IO expander was a CH422G with only a digital enable pin. Phase 5 Tier 7 real-
+  hardware work found the real chip is a CH32V003 with a genuine PWM register (`REG_PWM`,
+  0–255, inverted: 0x00 is full brightness, 0xFF is off) — confirmed by reading Waveshare's
+  own official reference source directly, not assumed. Real dimming is possible on this
+  hardware. `hal_backlight.c` still only exposes binary on/off today, because Phase 5's own
+  scope doesn't need more than that (the backlight is fixed-on throughout `ACTIVE`/`DIM`/
+  `NIGHT`, matching the table above); `DIM`/`NIGHT` still achieve their calmer feel entirely
+  through content (animation reduction, monochrome rendering, hidden transport), not a
+  backlight change. This is a scope decision for Phase 5, not a hardware limitation —
+  Phase 6's `svc_power` is free to build real backlight ramping against this same PWM
+  register when dim/sleep/wake actually gets designed; nothing here promises it will.
+  `THEME_MOTION_AMBIENT` (§5.4) still doesn't apply to backlight in Phase 5, only to backdrop
+  drift, since no backlight animation exists to apply it to yet.
 - Wake on touch is handled in `svc_input` **before** the gesture recogniser: the first
   touch after sleep wakes the panel and is *consumed*, never delivered as a tap. Otherwise
   a user brushing the screen skips a track.

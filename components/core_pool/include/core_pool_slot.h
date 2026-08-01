@@ -53,8 +53,17 @@ bool core_pool_slot_acquire(core_pool_slot_t *p, core_pool_handle_t *out);
 void core_pool_slot_release(core_pool_slot_t *p, core_pool_handle_t h);
 
 /* Returns a pointer to the slot's storage if h is currently valid (slot in
- * range AND generation matches), else NULL. */
+ * range, generation matches, AND storage is non-NULL), else NULL. */
 void *core_pool_slot_lock(const core_pool_slot_t *p, core_pool_handle_t h);
+
+/* Nulls p->storage so every subsequent lock() fails closed, regardless of
+ * generation. Deliberately leaves generation[]/free_list[] untouched --
+ * those are separate caller-owned arrays that may still be valid to use
+ * once storage is freed (e.g. artwork_cache_t's fixed-size arrays survive
+ * a suspend/resume cycle; only the backing pixel buffer is reallocated).
+ * Call after freeing the backing storage, before it's actually freed if
+ * order matters to the caller -- this function does no freeing itself. */
+void core_pool_slot_deinit(core_pool_slot_t *p);
 
 size_t   core_pool_slot_free_count(const core_pool_slot_t *p);
 size_t   core_pool_slot_min_free(const core_pool_slot_t *p);

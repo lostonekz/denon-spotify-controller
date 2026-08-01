@@ -51,6 +51,11 @@ void core_pool_slot_release(core_pool_slot_t *p, core_pool_handle_t h)
 
 void *core_pool_slot_lock(const core_pool_slot_t *p, core_pool_handle_t h)
 {
+    if (p->storage == NULL) {
+        return NULL;   /* backing storage freed (e.g. a suspended owner) --
+                         * a matching generation says nothing about whether
+                         * there's still memory behind it. */
+    }
     if (h.slot >= p->count) {
         return NULL;
     }
@@ -59,6 +64,11 @@ void *core_pool_slot_lock(const core_pool_slot_t *p, core_pool_handle_t h)
     }
 
     return p->storage + ((size_t)h.slot * p->block_size);
+}
+
+void core_pool_slot_deinit(core_pool_slot_t *p)
+{
+    p->storage = NULL;
 }
 
 size_t core_pool_slot_free_count(const core_pool_slot_t *p)

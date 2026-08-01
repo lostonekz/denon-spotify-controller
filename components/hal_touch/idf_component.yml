@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=5.4"
+  # The real, official GT911 driver -- not a hand-rolled I2C register
+  # implementation. Pulls in espressif/esp_lcd_touch transitively (the
+  # generic esp_lcd_touch_handle_t interface this driver implements).
+  espressif/esp_lcd_touch_gt911: "^1.2.0"

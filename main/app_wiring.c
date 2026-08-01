@@ -13,6 +13,7 @@
 #include "app_wiring_denon.h"
 #include "app_wiring_spotify.h"
 #include "app_wiring_ticks.h"
+#include "app_wiring_ui.h"
 #include "fw_version_generated.h"
 #include "ota_trust_anchor_dev.h"
 
@@ -252,6 +253,14 @@ bool app_wiring_create(app_ctx_t *ctx)
         return false;   /* app_wiring_create_artwork() already logged the reason */
     }
 
+    /* --- ui (Phase 5): depends on bsp_board's shared I2C bus/IO expander
+     * (owned internally, no ctx dependency) and svc_artwork (its pixel
+     * provider, threaded through but not called until Tier 6) --- */
+
+    if (!app_wiring_create_ui(ctx, clock)) {
+        return false;   /* app_wiring_create_ui() already logged the reason */
+    }
+
     /* --- lifecycle: collect every service's own descriptor, validate the
      * boot graph, mark everything READY --- */
 
@@ -267,7 +276,10 @@ bool app_wiring_create(app_ctx_t *ctx)
     ctx->service_descs[9]  = svc_denon_service_desc(&ctx->svc_denon_restart_ctx);
     ctx->service_descs[10] = svc_spotify_service_desc(&ctx->svc_spotify_restart_ctx);
     ctx->service_descs[11] = svc_artwork_service_desc(&ctx->svc_artwork_restart_ctx);
-    ctx->service_count = 12;
+    ctx->service_descs[12] = SVC_HAL_DISPLAY_SERVICE_DESC;
+    ctx->service_descs[13] = SVC_HAL_TOUCH_SERVICE_DESC;
+    ctx->service_descs[14] = SVC_UI_SERVICE_DESC;
+    ctx->service_count = 15;
 
     if (!make_semaphore(&ctx->supervisor_lock_sem)) {
         ESP_LOGE(TAG, "supervisor lock create failed");
@@ -346,9 +358,7 @@ bool app_wiring_create(app_ctx_t *ctx)
      * registration is deferred -- too few long-running tasks exist yet in
      * Phase 2 to distinguish "feeding WDT" from "no trip" meaningfully
      * (same call the plan made merging those two conditions); revisit once
-     * Phase 3+ adds denon/spotify/artwork. "Panel initialised, UI
-     * rendered, touch enumerated" is hardcoded true -- no hal_display/ui
-     * until Phase 5, a documented gap, not a silent cut. */
+     * Phase 3+ adds denon/spotify/artwork. */
 #ifndef CONFIG_DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT
     svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_BOOT_COMPLETE, true);
 #else
@@ -358,7 +368,16 @@ bool app_wiring_create(app_ctx_t *ctx)
     ESP_LOGW(TAG, "DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT set -- health gate will never pass");
 #endif
     svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_TASKS_OK, true);
-    svc_supervisor_report_health_condition(&ctx->supervisor, HEALTH_COND_PANEL_UI, true);
+    /* HEALTH_COND_PANEL_UI (PLATFORM.md §2.2: "panel initialised, UI
+     * rendered >= 1 frame, touch enumerated") is no longer hardcoded (Phase
+     * 5 Tier 4) but also isn't provable yet at this exact instant -- the UI
+     * task above has barely started, hasn't run lv_timer_handler() even
+     * once. hal_display_init()/hal_touch_init() having already returned
+     * ESP_OK (app_wiring_create_ui() would have failed app_wiring_create()
+     * entirely otherwise) covers "initialised"/"enumerated"; "rendered >= 1
+     * frame" is genuinely asynchronous, so it's re-polled every tick
+     * alongside HEALTH_COND_TLS_HANDSHAKE/HEAP_WATERMARK instead of
+     * reported once here -- see health_gate_relay_tick_trampoline(). */
 
     ESP_LOGI(TAG, "app_wiring: %d service(s) ready", (int)ctx->service_count);
     return true;

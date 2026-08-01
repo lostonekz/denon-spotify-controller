@@ -73,3 +73,19 @@ CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+
+# --- LVGL heap (docs/MEMORY.md §1: "LVGL heap dedicated pool = 512 KiB") ---
+# LV_MEM_SIZE_KILOBYTES sizes LVGL's OWN static internal-SRAM array, used
+# for its allocator's bookkeeping regardless of where the real heap memory
+# comes from. An earlier version of this setting held it at 2 (Kconfig's
+# stated floor, "int... >= 2kB") on the theory that the real 512 KiB PSRAM
+# pool -- added separately via lv_mem_add_pool() once a live lv_init()
+# exists (components/ui/ui_app/ui_app.c) -- would cover everything else.
+# Real hardware (Phase 5 Tier 7) disproved that: lv_init() itself never
+# returned at 2 KiB -- its own internal bootstrap (default display/group/
+# style-cache setup) needs more than the floor before ui_app.c ever gets a
+# chance to call lv_mem_add_pool(). 24 KiB gives lv_init() real margin
+# without meaningfully reintroducing the internal-RAM pressure the old,
+# unconditional 64 KiB default caused -- the 512 KiB pool for actual
+# widget/render work still lives entirely in PSRAM.
+CONFIG_LV_MEM_SIZE_KILOBYTES=24

@@ -347,6 +347,15 @@ target_include_directories(test_spotify_intent PRIVATE
     "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
+# Phase 5 Tier -1
+dsc_add_host_test(test_spotify_intent_ack
+    test_spotify_intent_ack.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_intent_ack.c")
+target_include_directories(test_spotify_intent_ack PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
 dsc_add_host_test(test_spotify_session_fsm
     test_spotify_session_fsm.c
     "${REPO_ROOT}/components/svc_spotify/spotify_session_fsm.c"
@@ -422,3 +431,64 @@ target_include_directories(test_volume_coordinator PRIVATE
     "${REPO_ROOT}/main"
     "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
+
+# --- Phase 5 Tier 1: components/ui/'s pure view_model/theme modules ------
+
+dsc_add_host_test(test_view_model_tone
+    test_view_model_tone.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_tone.c")
+target_include_directories(test_view_model_tone PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_format
+    test_view_model_format.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_format.c")
+target_include_directories(test_view_model_format PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_text
+    test_view_model_text.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_text.c")
+target_include_directories(test_view_model_text PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_scrim
+    test_view_model_scrim.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_scrim.c")
+target_include_directories(test_view_model_scrim PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_progress
+    test_view_model_progress.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_progress.c")
+target_include_directories(test_view_model_progress PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_now_playing
+    test_view_model_now_playing.c
+    fake_time_source.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_now_playing.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_tone.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_format.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_progress.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_text.c")
+target_include_directories(test_view_model_now_playing PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_theme_tokens
+    test_theme_tokens.c
+    "${REPO_ROOT}/components/ui/theme/theme_tokens.c")
+target_include_directories(test_theme_tokens PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_libraries(test_theme_tokens PRIVATE m)
+endif()

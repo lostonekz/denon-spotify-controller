@@ -47,6 +47,10 @@ typedef enum {
     SVC_ID_OTA,
     SVC_ID_POWER,
     SVC_ID_INPUT,
+    SVC_ID_HAL_DISPLAY,       /* Phase 5 -- LIFECYCLE.md §1.1's restart table already
+                                 * anticipated this row: reboot, degraded_ok=false */
+    SVC_ID_HAL_TOUCH,
+    SVC_ID_UI,
     SVC_ID_COUNT,            /* not a real service -- array-sizing sentinel */
 } service_id_t;
 

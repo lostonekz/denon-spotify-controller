@@ -10,19 +10,14 @@
 #define SPOTIFY_API_H
 
 #include "net_http.h"
+#include "spotify_api_result.h"   /* spotify_api_result_t -- split out in Phase 5 Tier -1
+                                     * so spotify_intent_ack.h can stay pure/host-testable */
 #include "spotify_intent.h"
 #include "spotify_parse.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef enum {
-    SPOTIFY_API_RESULT_OK = 0,
-    SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE,   /* 204 -- valid, not an error */
-    SPOTIFY_API_RESULT_UNAUTHORIZED,       /* 401 -- access token expired/invalid; caller should refresh */
-    SPOTIFY_API_RESULT_FAILED,
-} spotify_api_result_t;
 
 spotify_api_result_t spotify_api_get_player_state(net_http_t *http, const http_policy_t *policy,
                                                       const char *access_token, playback_state_t *out);

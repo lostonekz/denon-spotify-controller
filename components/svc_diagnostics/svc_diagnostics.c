@@ -11,7 +11,6 @@
 #include "freertos/task.h"
 
 #define CDUMP_MARKER_KEY "cdump_marker"
-#define DIAG_MAX_TASKS   16
 
 static const char *TAG = "svc_diagnostics";
 
@@ -94,6 +93,53 @@ void svc_diagnostics_check_coredump_on_boot(svc_diagnostics_t *d)
     d->kv.commit(d->kv.ctx);
 }
 
+/* This project's own task names (confirmed by reading every xTaskCreate*
+ * call site directly), not ESP-IDF/lwIP/driver-internal tasks (IDLE0/
+ * IDLE1/Tmr Svc/ipc0/ipc1/wifi/sys_evt/tiT/esp_timer/console_repl) -- this
+ * diagnostic exists to catch a stack-size budget THIS codebase chose being
+ * wrong, not to babysit tasks this codebase doesn't own the sizing of.
+ * "ota" deliberately omitted: it only exists during an active OTA download,
+ * so resolving its handle once at boot would almost always just fail. */
+static const char *const DIAG_TASK_NAMES[] = {
+    "ui_app", "svc_scheduler", "artwork", "denon", "spotify", "net_sup",
+};
+#define DIAG_TASK_COUNT (sizeof(DIAG_TASK_NAMES) / sizeof(DIAG_TASK_NAMES[0]))
+
+static TaskHandle_t s_diag_task_handles[DIAG_TASK_COUNT];
+static bool           s_diag_handles_resolved = false;
+
+/* A real, confirmed finding from real-hardware testing (Phase 5 Tier 7),
+ * not a style choice: this used to call uxTaskGetSystemState() to discover
+ * and report on every task in the system. Confirmed by reading FreeRTOS-
+ * Kernel-SMP/tasks.c directly (this target is dual-core,
+ * CONFIG_FREERTOS_UNICORE=n): uxTaskGetSystemState() calls vTaskSuspendAll()
+ * for its ENTIRE duration, on BOTH cores, while it walks every task's stack
+ * (a real, ~15-task, up-to-12KB-stack scan) to compute each one's high-
+ * water mark. A first fix just ran that scan less often (every 12th tick
+ * instead of every tick) -- real, measured improvement, but the SAME freeze
+ * still recurred every ~60s, because the fix reduced its FREQUENCY, not its
+ * root cause. The actual fix: uxTaskGetStackHighWaterMark(xTask) (a single
+ * task's handle, not "enumerate everything") does NOT call
+ * vTaskSuspendAll() at all -- confirmed by reading the same file, it's a
+ * direct, unlocked stack walk. xTaskGetHandle(name) (resolving a name to a
+ * handle) still suspends the scheduler, but only for a fast name-string
+ * search, not a slow per-task memory scan -- and it only needs to run ONCE
+ * per task, not every tick, since a task's handle never changes after
+ * creation. Resolved lazily on this component's own first tick (~5s after
+ * boot, safely after app_wiring_create() has already created every task
+ * this list names, confirmed against real boot logs), cached forever after
+ * -- every tick from then on costs zero scheduler-suspend time at all. */
+static void resolve_task_handles_once(void)
+{
+    if (s_diag_handles_resolved) {
+        return;
+    }
+    for (size_t i = 0; i < DIAG_TASK_COUNT; i++) {
+        s_diag_task_handles[i] = xTaskGetHandle(DIAG_TASK_NAMES[i]);
+    }
+    s_diag_handles_resolved = true;
+}
+
 void svc_diagnostics_report_tick(svc_diagnostics_t *d)
 {
     d->report_count++;
@@ -110,11 +156,13 @@ void svc_diagnostics_report_tick(svc_diagnostics_t *d)
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
 
-    static TaskStatus_t tasks[DIAG_MAX_TASKS];
-    UBaseType_t n = uxTaskGetSystemState(tasks, DIAG_MAX_TASKS, NULL);
-    for (UBaseType_t i = 0; i < n; i++) {
+    resolve_task_handles_once();
+    for (size_t i = 0; i < DIAG_TASK_COUNT; i++) {
+        if (s_diag_task_handles[i] == NULL) {
+            continue;   /* not resolved (created after this ran, or never created -- "ota") */
+        }
         ESP_LOGI(TAG, "task %-16s stack_hwm=%u words",
-                 tasks[i].pcTaskName, (unsigned)tasks[i].usStackHighWaterMark);
+                 DIAG_TASK_NAMES[i], (unsigned)uxTaskGetStackHighWaterMark(s_diag_task_handles[i]));
     }
 }
 

@@ -64,3 +64,13 @@ CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
 # --- Logging ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# --- LVGL (docs/ROADMAP.md Phase 5, docs/RISKS.md R9) ---
+# 16-bit RGB565: the panel's own native format (bsp_pins.h's ST7701 config)
+# and the same representation artwork_state_t.dominant_color_rgb565/
+# artwork_cache.c's pixel buffers already use throughout this codebase --
+# one color format end to end, not a conversion at the display boundary.
+# Set explicitly even though it already matches LVGL's own default: R9's
+# whole concern is version drift, and an explicit pin means a future LVGL
+# release changing its default doesn't silently change ours too.
+CONFIG_LV_COLOR_DEPTH_16=y

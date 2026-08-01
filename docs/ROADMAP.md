@@ -27,7 +27,16 @@ actually transferring, not silently idle — an earlier pass got this wrong, see
 (38 KiB) bounce buffers, WiFi/LWIP preferring PSRAM — the original settings, kept after five
 fallbacks (larger buffers, three refresh rates, JPEG task priority, moving WiFi off PSRAM)
 all left the rate unchanged or within noise. Budget accepted at 10%. Full reasoning and
-numbers in [RISKS.md](RISKS.md) R1 and [MEMORY.md](MEMORY.md) §1.
+numbers in [RISKS.md](RISKS.md) R1 and [MEMORY.md](MEMORY.md) §1. **The framebuffer-count
+part of this decision was later reversed in Phase 5 Tier 7**, once the real full application
+(not this phase's own spike) existed — see [RISKS.md](RISKS.md) R1's own Phase 5 Tier 7
+update for why, and for a second, unrelated root cause this phase's spike had no way to
+exercise. **The refresh-rate part was also later revisited, twice** — Tier 7 retried 30 Hz
+against that same real application and found it worse, then a post-Tier-7 performance sweep
+found that result was itself confounded by a bug fixed in the same tier, retried 30 Hz again
+clean, and settled there for the PSRAM headroom. Current setting: 30 Hz. Neither revision
+changes this phase's own 6.7–7.1%/10%-budget finding, which was never about a specific
+refresh rate.
 
 ---
 
@@ -166,6 +175,27 @@ The theme and widget layer, built once, properly.
 **Exit criteria:** Now Playing is genuinely finished — crossfades, dynamic accent,
 interpolated progress, marquee, stale-state treatment.
 
+**Met, with real, named exceptions — not silently shipped half-working.** Crossfades,
+per-track accent (from artwork luma), interpolated progress, marquee, and STALE/OFFLINE
+treatment are all real, on real hardware. Explicitly deferred, not forgotten: progress-bar
+scrub (no SEEK intent or endpoint exists anywhere in this project — `spotify_intent.h`
+documents this directly), the volume badge is read-only (`w_volume_sheet`, the tap target for
+it, is Phase 6), and the heart/favorite control was cut outright, not deferred (no
+favorite/save endpoint exists to wire it to). See [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md)
+§4/§6 for the full, real widget catalogue and screen layout actually built (Art-forward, a
+deliberate departure from this doc's original "Balanced" card-layout description) and for one
+real, still-open follow-up (the art card's corners are square, not the intended rounded, due
+to a real LVGL rendering bug, not a design change).
+
+This phase also absorbed real hardware bring-up work that Phase 0's own bullet list never
+named (`bsp_board`/`hal_display`/`hal_touch`) — a deliberate scope decision (Phase 0's own
+bring-up was explicitly throwaway, fully removed before Phase 1), not a gap. That bring-up
+needed real, substantial correction once actual hardware existed: wrong IO-expander chip and
+protocol, wrong RGB/I²C pin assignments, the display driver's generic default ST7701 init
+sequence instead of this real panel's own, and several memory-budget and scheduling bugs
+invisible to any simulator or spike test. Full account in [RISKS.md](RISKS.md) R1 and
+`components/bsp_board/include/bsp_pins.h`'s own top comment.
+
 ---
 
 ## Phase 6 — Remaining screens and polish
@@ -261,17 +291,34 @@ require restructuring.
 - Non-Spotify sources via AirPlay or the AVR's own now-playing metadata, so the screen stays
   useful when Spotify isn't the source
 - Lyrics (time-synced) on the Now Playing screen
+- Spotify seek/scrub — no SEEK intent kind or endpoint exists today (§1.3); `w_progress_bar`
+  is display-only pending this
+- Track favoriting — no save/favorite endpoint exists today; the heart control was cut from
+  `w_transport` entirely rather than shipped as a dead tap target (Phase 5)
+- A fast pre-decode artwork palette/accent path — today's accent color and pale-cover scrim
+  adjustment both wait on the one full JPEG decode (avg 660 ms / max ~1.8 s, RISKS.md R1);
+  a cheap low-res pre-pass could make the crossfade feel closer to instant
+- `svc_spotify` polish: `reauth_recommended` is set one refresh cycle later than it needs to
+  be; `spotify set-avr-device` accepts an arbitrary device-id string without checking it
+  against a non-blank name, so a malformed manual pin could persist a blank-name entry
 
 **Longer — new hardware or new capability**
 - mmWave presence sensing for wake-on-approach. Meaningfully better than wake-on-touch —
   the screen is already lit when you arrive. The `svc_power` wake-source abstraction is
   designed with this in mind.
-- Knock-to-wake using the onboard QMI8658 IMU (cheap; no new hardware)
+- Knock-to-wake via an IMU — **needs new hardware**, not "cheap, none needed" as this line
+  previously said: the real board (confirmed directly against the vendor's own hardware
+  reference, Phase 5 Tier 7) has no IMU fitted at all (`BSP_CAPS_IMU=0`); the QMI8658 this
+  line used to name was never actually on this board revision
 - Multiple panels in different rooms sharing config, with one acting as provisioner
 - Ambient / photo screensaver mode with a clock
 - Matter or HomeKit exposure as a media controller
 - A physical rotary encoder for volume — the one interaction a touchscreen genuinely does
   worse than hardware
+- Root-cause the real LVGL compositing-layer hang found in Phase 5 Tier 7 (`w_art_card`'s
+  rounded corners currently disabled because of it — [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md)
+  §4), or move corner-rounding into the artwork pixel buffer itself instead of relying on
+  LVGL's own `clip_corner`
 
 ---
 

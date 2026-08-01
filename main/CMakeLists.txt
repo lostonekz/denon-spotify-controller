@@ -6,6 +6,7 @@
 
 set(DSC_MAIN_SRCS "main.c" "app_start.c" "app_wiring.c" "app_wiring_core.c" "app_wiring_ticks.c"
                    "app_wiring_denon.c" "app_wiring_spotify.c" "app_wiring_artwork.c"
+                   "app_wiring_ui.c"
                    "app_wiring_volume.c" "volume_coordinator.c")
 
 # debug_console.c (docs/ROADMAP.md Phase 3's UART debug UI) only enters
@@ -58,6 +59,7 @@ idf_component_register(
                  "svc_diagnostics" "svc_supervisor"
                  "net_wifi" "net_time" "net_http" "svc_ota" "svc_denon"
                  "svc_spotify" "svc_artwork"
+                 "bsp_board" "hal_display" "hal_touch" "hal_backlight" "ui"
                  "console"
     PRIV_REQUIRES "esp_netif" "esp_event"
 )

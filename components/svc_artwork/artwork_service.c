@@ -31,8 +31,27 @@ static void handle_track_change(svc_artwork_t *a)
     if (!core_state_read(a->state_store, DOMAIN_PLAYBACK, &pb, sizeof(pb))) {
         return;
     }
-    if (pb.track_id[0] == '\0' || pb.artwork_url_640[0] == '\0') {
-        return;   /* nothing playing, or no artwork URL for this track */
+
+    if (pb.track_id[0] == '\0') {
+        /* Nothing playing anywhere. Tier -1: svc_spotify now actually
+         * publishes this transition (spotify_service_task.c's
+         * NO_ACTIVE_DEVICE fix) -- previously a held handle from the last
+         * played track would stick on screen forever after playback
+         * stopped entirely, since this function never even learned
+         * playback had stopped, let alone released anything. Release+clear
+         * once on the transition, not on every idle poll. */
+        if (a->current_handle.generation != 0) {
+            artwork_cache_release(&a->cache, a->current_handle);
+            a->current_handle = (artwork_handle_t){ 0 };
+        }
+        if (a->last_track_id[0] != '\0') {
+            a->last_track_id[0] = '\0';
+            publish_failed(a);
+        }
+        return;
+    }
+    if (pb.artwork_url_640[0] == '\0') {
+        return;   /* playing, but this track has no artwork URL */
     }
     if (strcmp(pb.track_id, a->last_track_id) == 0) {
         return;   /* already fetched -- only re-fetch on a real track-id change */
@@ -79,6 +98,7 @@ static void handle_track_change(svc_artwork_t *a)
     uint32_t color = artwork_palette_dominant_color_rgb565(&buf);
 
     artwork_state_t st = { .handle = new_handle, .dominant_color_rgb565 = color };
+    strncpy(st.track_id, fetching_track_id, sizeof(st.track_id) - 1);
     core_state_write(a->state_store, DOMAIN_ARTWORK, LINK_STATUS_OK, &st, sizeof(st));
 
     event_t evt = { .topic = TOPIC_ARTWORK };
@@ -99,25 +119,12 @@ static void handle_track_change(svc_artwork_t *a)
     strncpy(a->last_track_id, fetching_track_id, sizeof(a->last_track_id) - 1);
 }
 
-static void artwork_service_task(void *pv)
-{
-    svc_artwork_t *a = (svc_artwork_t *)pv;
-    while (!a->task_should_stop) {
-        bool any_event = false;
-        event_t evt;
-        while (core_eventbus_poll(a->bus, a->playback_sub, &evt)) {
-            any_event = true;   /* drain fully -- re-read core_state once below, not once per event */
-        }
-        if (any_event) {
-            handle_track_change(a);
-        }
-        vTaskDelay(pdMS_TO_TICKS(ARTWORK_TASK_IDLE_DELAY_MS));
-    }
-    xSemaphoreGive(a->stopped_sem);
-    vTaskDelete(NULL);
-}
-
-bool svc_artwork_resume(svc_artwork_t *a)
+/* Real implementations -- task-owned (Phase 5 Tier -1, this file's top
+ * comment): called only from svc_artwork_create() (before the task exists,
+ * so nothing can race it) and from artwork_service_task()'s own loop while
+ * draining a request. Never call these directly from another task -- use
+ * svc_artwork_request_suspend/resume(), declared below. */
+static bool artwork_service_resume_now(svc_artwork_t *a)
 {
     if (!artwork_cache_alloc(&a->cache)) {
         return false;
@@ -130,7 +137,7 @@ bool svc_artwork_resume(svc_artwork_t *a)
     return true;
 }
 
-bool svc_artwork_suspend(svc_artwork_t *a)
+static bool artwork_service_suspend_now(svc_artwork_t *a)
 {
     /* Critical ordering (artwork_cache.h's own contract): clear the handle
      * and publish FAILED BEFORE freeing the backing buffer -- otherwise a
@@ -148,6 +155,72 @@ bool svc_artwork_suspend(svc_artwork_t *a)
     return true;
 }
 
+static void artwork_service_drain_lifecycle_request(svc_artwork_t *a)
+{
+    xSemaphoreTake(a->lifecycle_lock, portMAX_DELAY);
+    artwork_lifecycle_request_t req = a->lifecycle_request;
+    a->lifecycle_request = ARTWORK_LIFECYCLE_REQUEST_NONE;
+    xSemaphoreGive(a->lifecycle_lock);
+
+    if (req == ARTWORK_LIFECYCLE_REQUEST_SUSPEND) {
+        artwork_service_suspend_now(a);
+    } else if (req == ARTWORK_LIFECYCLE_REQUEST_RESUME) {
+        if (!artwork_service_resume_now(a)) {
+            ESP_LOGW(TAG, "resume failed (allocation) -- artwork stays suspended");
+        }
+    }
+}
+
+static void artwork_service_task(void *pv)
+{
+    svc_artwork_t *a = (svc_artwork_t *)pv;
+    while (!a->task_should_stop) {
+        /* Checked first, before this iteration's own event drain -- a
+         * pending suspend should block a NEW fetch from starting, not just
+         * eventually take effect after one more. */
+        artwork_service_drain_lifecycle_request(a);
+
+        bool any_event = false;
+        event_t evt;
+        while (core_eventbus_poll(a->bus, a->playback_sub, &evt)) {
+            any_event = true;   /* drain fully -- re-read core_state once below, not once per event */
+        }
+        if (any_event) {
+            handle_track_change(a);
+        }
+        vTaskDelay(pdMS_TO_TICKS(ARTWORK_TASK_IDLE_DELAY_MS));
+    }
+    xSemaphoreGive(a->stopped_sem);
+    vTaskDelete(NULL);
+}
+
+void svc_artwork_request_suspend(svc_artwork_t *a)
+{
+    xSemaphoreTake(a->lifecycle_lock, portMAX_DELAY);
+    a->lifecycle_request = ARTWORK_LIFECYCLE_REQUEST_SUSPEND;
+    xSemaphoreGive(a->lifecycle_lock);
+}
+
+void svc_artwork_request_resume(svc_artwork_t *a)
+{
+    xSemaphoreTake(a->lifecycle_lock, portMAX_DELAY);
+    a->lifecycle_request = ARTWORK_LIFECYCLE_REQUEST_RESUME;
+    xSemaphoreGive(a->lifecycle_lock);
+}
+
+static bool artwork_pixel_lock_copy_trampoline(void *ctx, artwork_handle_t handle,
+                                                 uint16_t *out_buf, size_t out_cap_bytes)
+{
+    svc_artwork_t *a = (svc_artwork_t *)ctx;
+    return artwork_cache_lock_copy(&a->cache, handle, out_buf, out_cap_bytes);
+}
+
+artwork_pixel_provider_t svc_artwork_pixel_provider(svc_artwork_t *a)
+{
+    artwork_pixel_provider_t p = { .ctx = a, .lock_copy = artwork_pixel_lock_copy_trampoline };
+    return p;
+}
+
 bool svc_artwork_create(svc_artwork_t *a, const svc_artwork_cfg_t *cfg)
 {
     memset(a, 0, sizeof(*a));
@@ -163,13 +236,21 @@ bool svc_artwork_create(svc_artwork_t *a, const svc_artwork_cfg_t *cfg)
         return false;
     }
 
-    if (!svc_artwork_resume(a)) {
+    if (!artwork_service_resume_now(a)) {
+        return false;
+    }
+
+    a->lifecycle_lock = xSemaphoreCreateMutex();
+    if (a->lifecycle_lock == NULL) {
+        artwork_service_suspend_now(a);
         return false;
     }
 
     a->stopped_sem = xSemaphoreCreateBinary();
     if (a->stopped_sem == NULL) {
-        svc_artwork_suspend(a);
+        vSemaphoreDelete(a->lifecycle_lock);
+        a->lifecycle_lock = NULL;
+        artwork_service_suspend_now(a);
         return false;
     }
 
@@ -179,7 +260,9 @@ bool svc_artwork_create(svc_artwork_t *a, const svc_artwork_cfg_t *cfg)
     if (ok != pdPASS) {
         vSemaphoreDelete(a->stopped_sem);
         a->stopped_sem = NULL;
-        svc_artwork_suspend(a);
+        vSemaphoreDelete(a->lifecycle_lock);
+        a->lifecycle_lock = NULL;
+        artwork_service_suspend_now(a);
         return false;
     }
     return true;
@@ -198,8 +281,12 @@ void svc_artwork_teardown(void *handle)
         vSemaphoreDelete(a->stopped_sem);
         a->stopped_sem = NULL;
     }
+    if (a->lifecycle_lock != NULL) {
+        vSemaphoreDelete(a->lifecycle_lock);
+        a->lifecycle_lock = NULL;
+    }
     core_eventbus_unsubscribe(a->bus, a->playback_sub);
-    artwork_cache_free(&a->cache);
+    artwork_cache_teardown(&a->cache);
     if (a->jpeg_staging != NULL) {
         heap_caps_free(a->jpeg_staging);
         a->jpeg_staging = NULL;

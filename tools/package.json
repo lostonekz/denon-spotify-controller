@@ -1,0 +1,8 @@
+{
+  "name": "dsc-asset-tools",
+  "private": true,
+  "description": "Pinned Node tooling for tools/gen_assets.py (docs/adr/0005-assets-in-app-image.md). Not part of the firmware build itself.",
+  "devDependencies": {
+    "lv_font_conv": "1.5.3"
+  }
+}

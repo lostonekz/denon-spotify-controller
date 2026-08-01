@@ -75,6 +75,77 @@ mean this acceptance was wrong — not because the number itself is still in que
 budget) is real and unresolved. Artwork would visibly lag a track change at these numbers.
 Not blocking R1's drop-rate question, but blocking a future "artwork feels instant" bar.
 
+**Phase 5 Tier 7 update — real full application, not the Phase 0 spike, found a different,
+more severe problem than anything above, and corrected one of this section's own
+predictions.**
+
+The Phase 0 spike above never exercised this project's actual full application: 15 real
+services, the real widget tree, and `svc_diagnostics`'s periodic reporting all running
+together. On real hardware with all of that in place, Now Playing showed a periodic,
+regularly-timed band of corrupted/blown-out color sweeping the screen, plus a fixed-interval
+vertical shift — a materially worse and more visible symptom than the ~7% figure above ever
+described, and on a fixed timer, not the noisy/load-correlated pattern R1's own WiFi-baseline
+theory would predict.
+
+Two real, distinct causes, found in order:
+
+1. **`svc_diagnostics_report_tick()` was periodically freezing the entire scheduler.** It
+   called `uxTaskGetSystemState()` every 5 s to log every task's stack high-water mark.
+   Confirmed by reading `FreeRTOS-Kernel-SMP/tasks.c` directly (this target is dual-core):
+   that call wraps its ENTIRE per-task stack scan in `vTaskSuspendAll()`, freezing every task
+   on both cores for its whole duration — long enough, with ~15 tasks including a 12 KiB UI
+   stack, to starve the RGB panel's bounce-buffer DMA refill on a fixed 5 s cadence. This has
+   nothing to do with PSRAM bandwidth at all — it is a scheduling problem, a risk category
+   this section never considered, because the Phase 0 spike had no equivalent periodic
+   diagnostic doing a full-system task enumeration. Fixed properly (not just made less
+   frequent) by resolving each of this project's own task handles once by name at boot
+   (`xTaskGetHandle()`, one small suspend, done once) and using
+   `uxTaskGetStackHighWaterMark(handle)` per tick thereafter — confirmed by reading the same
+   file, that single-task call never suspends the scheduler at all. See
+   `components/svc_diagnostics/svc_diagnostics.c`'s own top comment for the full detail.
+2. **"Single framebuffer with partial refresh" — this section's own "not tried... no reason
+   to expect it to behave differently" fallback — was finally tried, and that prediction was
+   wrong.** Against real, non-synthetic Now Playing content (not a moving gradient), switching
+   from `LV_DISPLAY_RENDER_MODE_FULL` (redraw the whole 480×480 screen every cycle, into one
+   of 2 alternating framebuffers) to `LV_DISPLAY_RENDER_MODE_PARTIAL` (LVGL's own small
+   intermediate draw buffer, only the genuinely-changed area touches PSRAM) was a real,
+   necessary part of the fix — most ticks now move only a moving playhead or a ticking clock,
+   not a full frame, which gave real additional margin against cause #1's own DMA-starving
+   effect (and would plausibly help against genuine bandwidth contention too, though that was
+   never isolated as a separate variable here). A second buffer would only reintroduce
+   staleness for partial updates (`esp_lcd_rgb_panel`'s own `draw_bitmap()` writes into
+   whichever framebuffer index is "current", consistent frame-to-frame only with exactly
+   one), so `num_fbs` dropped from 2 to 1 as part of the same change.
+
+**Refresh rate retested against the real symptom, not just the old drop-rate metric: 30 Hz
+made both symptoms WORSE, not better**, then reverted to 60 Hz. Consistent with this
+section's own original three-refresh-rate finding (30/50/60 Hz all within a point of each
+other) if the dominant real-world cause is cause #1 above (a roughly fixed-duration freeze,
+so a slower frame period just means each occurrence is visible for a larger fraction of a
+frame) rather than a bandwidth effect refresh rate would directly move.
+
+**This does not overturn the original Phase 0 finding.** The ~6.7–7.1% figure and "no
+bandwidth-side lever moves it" conclusion were measured rigorously, with per-task attribution
+ruling out specific causes, against a real spike under real load — that measurement stands as
+a separate, likely still-real, minor residual (WiFi's own baseline presence). What changed is
+that it was never the dominant VISIBLE symptom once the real widget tree and the real
+diagnostics routine both existed — those are new interactions the spike, by construction,
+could not have exercised.
+
+**Performance sweep update (2026-08-01) — 30 Hz re-tested with cause #1 fixed, and
+confirmed good.** The WORSE-at-30-Hz result immediately above was measured while
+`svc_diagnostics`'s scheduler-freeze bug (cause #1) was still active — a fixed-duration
+freeze is exactly the kind of confound that makes a slower frame period look worse for
+reasons that have nothing to do with refresh rate itself. With that freeze genuinely fixed,
+30 Hz was re-tested on real hardware against the real Now Playing widget tree: no corner
+artifacts, no vertical shift, no visible regression versus 60 Hz. This is consistent with,
+not a reversal of, the original Phase 0 three-refresh-rate finding (drop rate flat across
+30/50/60 Hz) — the earlier WORSE-at-30-Hz result was the anomaly, explained by a confound
+that no longer exists, not a real cost of a lower refresh rate. **Current settings: 30 Hz
+(8 MHz pixel clock), 1 framebuffer, `LV_DISPLAY_RENDER_MODE_PARTIAL` with a 40-row
+LVGL-owned draw buffer, 20-row (38 KiB) bounce buffers unchanged.** Settled at 30 Hz for the
+PSRAM-bandwidth headroom it frees over 60 Hz, with no observed visual cost.
+
 ---
 
 ## R2 — Denon telnet is single-client, device-wide
