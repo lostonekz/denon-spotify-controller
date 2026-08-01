@@ -178,11 +178,11 @@ compile error — the same command almost always succeeds when run alone
 (`gcc <same flags> -c file.c -o /tmp/test.o` directly). Don't spend time
 debugging the "broken" file; retry with `-j 8` first.
 
-**Build and run the Phase 0 spike:**
+**Build and run the real firmware:**
 
 ```powershell
 idf.py set-target esp32s3
-idf.py menuconfig     # Phase 0 spike WiFi SSID/password and download URL
+idf.py menuconfig     # WiFi credentials, Spotify client ID, feature flags
 idf.py build -- -j 8
 ```
 
@@ -190,8 +190,7 @@ The dev signing key (`tools/keys/dev_ota_signing.pem`) does not need
 generating by hand — see [tools/keys/README.md](../tools/keys/README.md). CI
 generates a fresh disposable one every run for the same reason.
 
-Flashing and running the spike against real hardware is the actual Phase 0
-deliverable ([ROADMAP.md](ROADMAP.md)) and needs the board in hand:
+Flashing and running against real hardware needs the board in hand:
 
 ```powershell
 idf.py flash monitor

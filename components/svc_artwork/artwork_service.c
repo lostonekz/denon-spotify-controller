@@ -51,7 +51,24 @@ static void handle_track_change(svc_artwork_t *a)
         return;
     }
     if (pb.artwork_url_640[0] == '\0') {
-        return;   /* playing, but this track has no artwork URL */
+        /* Playing, but this specific track has no artwork URL. A bare
+         * return here (found by review) left current_handle/last_track_id
+         * pointing at whatever the PREVIOUS track's artwork was --
+         * DOMAIN_ARTWORK never updated, so the UI kept the old cover on
+         * screen under the new (trackless) track's own metadata. Same
+         * release+clear+publish-once-per-transition treatment as the
+         * "nothing playing" branch above, keyed off last_track_id so
+         * repeat idle polls for the same trackless track don't republish
+         * every tick. */
+        if (strcmp(pb.track_id, a->last_track_id) != 0) {
+            if (a->current_handle.generation != 0) {
+                artwork_cache_release(&a->cache, a->current_handle);
+                a->current_handle = (artwork_handle_t){ 0 };
+            }
+            strncpy(a->last_track_id, pb.track_id, sizeof(a->last_track_id) - 1);
+            publish_failed(a);
+        }
+        return;
     }
     if (strcmp(pb.track_id, a->last_track_id) == 0) {
         return;   /* already fetched -- only re-fetch on a real track-id change */
@@ -286,6 +303,20 @@ void svc_artwork_teardown(void *handle)
         a->lifecycle_lock = NULL;
     }
     core_eventbus_unsubscribe(a->bus, a->playback_sub);
+
+    /* Same critical ordering as artwork_service_suspend_now()'s own
+     * comment: publish FAILED (clearing DOMAIN_ARTWORK's handle) BEFORE
+     * freeing the cache -- found missing here by review. Without this,
+     * a stale handle sits in core_state referencing a cache that's about
+     * to be freed and re-allocated with generation counters reset to 0
+     * (artwork_cache.c's artwork_cache_alloc()); a UI-side read after
+     * restart could then pass the generation check against a slot that
+     * now holds a completely different track's pixels, since the
+     * generation numbers collide across the restart instead of the stale
+     * handle being cleanly rejected. svc_artwork_restart() (below) calls
+     * this before svc_artwork_create(), so this is the only place that
+     * ordering can be enforced for the restart path. */
+    publish_failed(a);
     artwork_cache_teardown(&a->cache);
     if (a->jpeg_staging != NULL) {
         heap_caps_free(a->jpeg_staging);

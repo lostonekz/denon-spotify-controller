@@ -253,12 +253,26 @@ nearly impossible to retrofit.
 The gap between tapping *pause* and Spotify's API confirming it is 200–600 ms. Waiting for
 confirmation feels broken. So:
 
-1. UI posts `INTENT_PAUSE` and immediately renders the paused state, flagged `pending`.
+1. UI posts `INTENT_PAUSE` and immediately renders `pending`: the transport row dims to 50%
+   opacity and its buttons disable, visible well within R10's 100 ms budget. **Revised from
+   an earlier draft of this section, which said the play/pause glyph itself flips to the
+   predicted target state immediately.** Built in Phase 5 Tier 6 and found, while building
+   it, not to generalise: PAUSE/PLAY have an obvious predicted next state, but NEXT/PREV
+   don't (the next track's metadata isn't known until the server responds), so a "predict
+   the target state" mechanism would only ever cover two of the four transport buttons.
+   The dim+disable treatment covers all four uniformly, is still genuinely immediate
+   feedback (nothing waits on the network to visibly respond to a tap), and is what's
+   actually built and hardware-verified — see `w_transport_set_state()` and
+   `view_model_now_playing.c`'s `vm.is_playing = pb->is_playing` (server-truth only, never
+   overridden by a pending intent's predicted outcome).
 2. `svc_spotify` executes, then force-polls at +250 ms and +1 s to converge quickly.
-3. If the server agrees, `pending` clears silently.
-4. If the server disagrees or the call fails, state snaps back **with a short animation**
-   and a toast. Never a silent revert — a control that lies is worse than a slow one.
-5. A pending intent that goes unconfirmed for 3 s is abandoned and reconciled.
+3. If the server agrees, `pending` clears silently — the row undims/re-enables, and by then
+   the glyph has already caught up to the server's own real state.
+4. If the server disagrees or the call fails, `pending` clears **with a toast**
+   (`INTENT_ACK_EVT_REJECTED`). There is no glyph to snap back, because none was ever
+   flipped optimistically — only the dim/disabled row reverts.
+5. A pending intent that goes unconfirmed for 3 s is abandoned and reconciled the same way,
+   without a toast (silence, not a false rejection — the request may still land).
 
 Pending state lives in the *view model*, not the state store. The store only ever holds
 what we believe the server actually reports. That separation is what keeps reconciliation
