@@ -8,7 +8,9 @@
 
 #include <string.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 
 static const char *TAG = "svc_denon";
 
@@ -100,8 +102,16 @@ bool svc_denon_create(svc_denon_t *d, const svc_denon_cfg_t *cfg)
     }
 
     d->task_should_stop = false;
-    BaseType_t ok = xTaskCreatePinnedToCore(denon_service_task, "denon", DENON_TASK_STACK, d,
-                                              DENON_TASK_PRIO, &d->task_handle, DENON_TASK_CORE);
+    /* PSRAM-backed stack -- MEMORY.md §4's real-hardware finding: real
+     * internal-SRAM margin is only ~138 KiB (idf.py size's DIRAM total),
+     * shared by every task's stack that stays internal. denon itself
+     * doesn't use TLS, but freeing its stack still grows the shared pool
+     * the tasks that do (artwork, spotify, net_wifi) actually need. Same
+     * xTaskCreatePinnedToCoreWithCaps() pattern already proven safe for
+     * ui_app's stack. */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(denon_service_task, "denon", DENON_TASK_STACK, d,
+                                                       DENON_TASK_PRIO, &d->task_handle, DENON_TASK_CORE,
+                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ok != pdPASS) {
         vSemaphoreDelete(d->cmdq_lock);
         vSemaphoreDelete(d->stopped_sem);

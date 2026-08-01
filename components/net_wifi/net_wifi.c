@@ -3,11 +3,13 @@
 #include <string.h>
 
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_random.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
+#include "freertos/idf_additions.h"
 
 #define NET_WIFI_TASK_STACK 4096
 #define NET_WIFI_TASK_PRIO  6
@@ -332,8 +334,19 @@ bool net_wifi_create(net_wifi_t *w, const net_wifi_cfg_t *cfg)
         return false;
     }
 
-    BaseType_t ok = xTaskCreatePinnedToCore(net_sup_task, "net_sup", NET_WIFI_TASK_STACK,
-                                              w, NET_WIFI_TASK_PRIO, &w->task, 0);
+    /* PSRAM-backed stack (MEMORY.md §4's real-hardware finding, found while
+     * debugging real artwork/playback TLS fetch failures on the actual
+     * Spotify CDN, not just cited): internal SRAM's real usable ceiling is
+     * ~138 KiB (idf.py size's own DIRAM total, not MEMORY.md's original
+     * ~512 KiB figure), and mbedTLS's dynamic buffer resize needs ~16.7 KiB
+     * per session against real (non-fragment-length-negotiating) hosts --
+     * every task's stack this project can afford to move off that budget
+     * is real margin, same pattern already proven safe for ui_app's own
+     * stack. TCB itself still lands in internal RAM automatically
+     * (idf_additions.h's own guarantee), only the stack moves. */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(net_sup_task, "net_sup", NET_WIFI_TASK_STACK,
+                                                       w, NET_WIFI_TASK_PRIO, &w->task, 0,
+                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ok != pdPASS || w->task == NULL) {
         ESP_LOGE(TAG, "failed to create net_sup task");
         return false;

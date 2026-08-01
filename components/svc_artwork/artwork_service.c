@@ -7,6 +7,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 
 static const char *TAG = "svc_artwork";
 
@@ -272,8 +273,16 @@ bool svc_artwork_create(svc_artwork_t *a, const svc_artwork_cfg_t *cfg)
     }
 
     a->task_should_stop = false;
-    BaseType_t ok = xTaskCreatePinnedToCore(artwork_service_task, "artwork", ARTWORK_TASK_STACK, a,
-                                              ARTWORK_TASK_PRIO, &a->task_handle, ARTWORK_TASK_CORE);
+    /* PSRAM-backed stack -- MEMORY.md §4's real-hardware finding: real
+     * internal-SRAM margin is only ~138 KiB (idf.py size's DIRAM total),
+     * and this is the task whose own real Spotify-CDN artwork fetch was
+     * caught failing an ~16.7 KiB mbedTLS buffer alloc against it. Same
+     * xTaskCreatePinnedToCoreWithCaps() pattern already proven safe for
+     * ui_app's stack (ESP32-S3 has no WiFi/BT/ROM-call restriction on this
+     * -- that caveat in FreeRTOS's own Kconfig help is ESP32-classic-only). */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(artwork_service_task, "artwork", ARTWORK_TASK_STACK, a,
+                                                       ARTWORK_TASK_PRIO, &a->task_handle, ARTWORK_TASK_CORE,
+                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ok != pdPASS) {
         vSemaphoreDelete(a->stopped_sem);
         a->stopped_sem = NULL;

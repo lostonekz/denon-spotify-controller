@@ -9,7 +9,9 @@
 
 #include <string.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 
 #include "spotify_auth.h"
 
@@ -115,8 +117,15 @@ bool svc_spotify_create(svc_spotify_t *s, const svc_spotify_cfg_t *cfg)
     }
 
     s->task_should_stop = false;
-    BaseType_t ok = xTaskCreatePinnedToCore(spotify_service_task, "spotify", SPOTIFY_TASK_STACK, s,
-                                              SPOTIFY_TASK_PRIO, &s->task_handle, SPOTIFY_TASK_CORE);
+    /* PSRAM-backed stack -- MEMORY.md §4's real-hardware finding: real
+     * internal-SRAM margin is only ~138 KiB (idf.py size's DIRAM total),
+     * and this is the task whose own /v1/me/player poll shares the exact
+     * same real mbedTLS-buffer-vs-internal-RAM failure caught on artwork's
+     * fetch from the real Spotify CDN. Same xTaskCreatePinnedToCoreWithCaps()
+     * pattern already proven safe for ui_app's stack. */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(spotify_service_task, "spotify", SPOTIFY_TASK_STACK, s,
+                                                       SPOTIFY_TASK_PRIO, &s->task_handle, SPOTIFY_TASK_CORE,
+                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ok != pdPASS) {
         vSemaphoreDelete(s->session_lock);
         vSemaphoreDelete(s->stopped_sem);
