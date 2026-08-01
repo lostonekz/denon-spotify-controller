@@ -18,7 +18,15 @@ static intent_t make_intent(intent_domain_t domain, uint16_t kind, const void *p
     intent_t intent = { 0 };
     intent.domain = domain;
     intent.kind   = kind;
-    memcpy(intent.payload, payload, payload_len);
+    /* memcpy(dst, NULL, 0) is technically UB per the C standard even at
+     * length 0 -- UBSan's nonnull-attribute check fires on the NULL
+     * argument alone, regardless of length (real finding: this test file
+     * was passing (NULL, 0) at 7 of its own 11 call sites, silently never
+     * caught before because the ASan/UBSan CI job never actually reached
+     * this Test step -- see test/host/CMakeLists.txt's own fix history). */
+    if (payload != NULL && payload_len > 0) {
+        memcpy(intent.payload, payload, payload_len);
+    }
     return intent;
 }
 
