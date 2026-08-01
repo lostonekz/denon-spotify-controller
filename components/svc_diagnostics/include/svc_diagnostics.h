@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 #include "core_eventbus.h"
+#include "core_state.h"
 #include "kv_store_if.h"
 #include "lifecycle_types.h"
 #include "os_if_types.h"
@@ -34,14 +35,16 @@ extern "C" {
 typedef struct {
     kv_store_if_t     kv;    /* already open on the "diagnostics" namespace */
     core_eventbus_t  *bus;
+    core_state_t       *state;   /* Tier 7: reads DOMAIN_UI in report_tick() --
+                                     a legal svc->core edge, no mediation needed */
     time_source_t      clock;
 
     uint32_t            fault_seq;      /* monotonic per-boot sequence, not a log index */
     uint32_t            report_count;
 } svc_diagnostics_t;
 
-bool svc_diagnostics_create(svc_diagnostics_t *d, core_eventbus_t *bus, kv_store_if_t kv,
-                              time_source_t clock);
+bool svc_diagnostics_create(svc_diagnostics_t *d, core_eventbus_t *bus, core_state_t *state,
+                              kv_store_if_t kv, time_source_t clock);
 
 /* Checks for a coredump image in flash; if one is present and its
  * {task, pc} fingerprint doesn't match the last one already recorded,

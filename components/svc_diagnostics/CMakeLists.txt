@@ -7,6 +7,6 @@
 idf_component_register(
     SRCS        "svc_diagnostics_faultlog.c" "svc_diagnostics.c"
     INCLUDE_DIRS "include"
-    REQUIRES     "core_types" "core_eventbus" "espcoredump"
+    REQUIRES     "core_types" "core_eventbus" "core_state" "espcoredump"
     PRIV_REQUIRES ""
 )

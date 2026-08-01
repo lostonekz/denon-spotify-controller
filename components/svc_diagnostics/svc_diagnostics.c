@@ -20,11 +20,12 @@ typedef struct {
     char     exc_task[FAULTLOG_TASK_NAME_MAX];
 } coredump_marker_t;
 
-bool svc_diagnostics_create(svc_diagnostics_t *d, core_eventbus_t *bus, kv_store_if_t kv,
-                              time_source_t clock)
+bool svc_diagnostics_create(svc_diagnostics_t *d, core_eventbus_t *bus, core_state_t *state,
+                              kv_store_if_t kv, time_source_t clock)
 {
     memset(d, 0, sizeof(*d));
     d->bus   = bus;
+    d->state = state;
     d->kv    = kv;
     d->clock = clock;
     return true;
@@ -155,6 +156,19 @@ void svc_diagnostics_report_tick(svc_diagnostics_t *d)
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+
+    /* Tier 7: DOMAIN_UI, published by ui_app_task's own loop (a legal
+     * ui->core edge) roughly once a second -- read directly here, no
+     * app_wiring relay needed (svc_diagnostics already depends on core_state
+     * directly, same as every other domain read in this codebase). Reads as
+     * all-zero (LINK_STATUS_UNAVAILABLE's default meta) until the UI task's
+     * first publish, which is fine -- this report already tolerates a
+     * not-yet-created task in the loop below. */
+    ui_diag_state_t ui_diag = { 0 };
+    core_state_read(d->state, DOMAIN_UI, &ui_diag, sizeof(ui_diag));
+    ESP_LOGI(TAG, "ui: frames_rendered=%u frames_dropped=%u glyph_fallback=%u",
+             (unsigned)ui_diag.frames_rendered, (unsigned)ui_diag.frames_dropped,
+             (unsigned)ui_diag.unrepresentable_glyph_count);
 
     resolve_task_handles_once();
     for (size_t i = 0; i < DIAG_TASK_COUNT; i++) {

@@ -61,6 +61,12 @@ typedef struct {
     bool       pending;
     uint32_t     pending_seq;
     int64_t        pending_since_us;
+
+    uint32_t   glyph_fallback_count;   /* RISKS.md R17 -- cumulative, across every
+                                           tick's title/artist/album, never reset;
+                                           read by ui_app_task's own DOMAIN_UI
+                                           publish (view_model_text.h's
+                                           count_replacements(), not re-derived here) */
 } view_model_now_playing_apply_t;
 
 /* Subscribes to all 5 topics. False (nothing subscribed that failed is
@@ -91,6 +97,10 @@ void view_model_now_playing_apply_tick(view_model_now_playing_apply_t *a);
  * has run (the returned provider only reads `a`'s fields at call time, on
  * an actual tap, by which point init() will already have completed). */
 intent_submit_provider_t view_model_now_playing_apply_intent_submit_provider(view_model_now_playing_apply_t *a);
+
+/* Cumulative count of U+FFFD substitutions across every tick's title/artist
+ * (RISKS.md R17). Read by ui_app_task's own periodic DOMAIN_UI publish. */
+uint32_t view_model_now_playing_apply_glyph_fallback_count(const view_model_now_playing_apply_t *a);
 
 #ifdef __cplusplus
 }

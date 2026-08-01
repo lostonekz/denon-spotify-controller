@@ -37,6 +37,15 @@ size_t view_model_text_copy_safe(char *dst, size_t dst_cap, const char *src);
  * Track") is needed instead. */
 bool view_model_text_has_content(const char *s);
 
+/* Counts U+FFFD replacement sequences in s (NUL-terminated), i.e. how many
+ * unrepresentable-byte substitutions view_model_text_copy_safe() made
+ * producing it. Feeds RISKS.md R17's glyph-fallback counter
+ * (ui_diag_state_t.unrepresentable_glyph_count, app_state_types.h) -- kept
+ * as its own pure, host-tested function rather than having copy_safe()
+ * itself return a count, so every existing call site's signature and
+ * already-verified behaviour stays untouched. */
+size_t view_model_text_count_replacements(const char *s);
+
 #ifdef __cplusplus
 }
 #endif

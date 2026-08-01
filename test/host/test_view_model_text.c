@@ -162,6 +162,35 @@ static void test_has_content_true_when_mixed_with_replacement_chars(void)
     TEST_ASSERT_TRUE(view_model_text_has_content("\xEF\xBF\xBDoxer"));
 }
 
+static void test_count_replacements_zero_for_null(void)
+{
+    TEST_ASSERT_EQUAL_UINT(0, view_model_text_count_replacements(NULL));
+}
+
+static void test_count_replacements_zero_for_clean_text(void)
+{
+    TEST_ASSERT_EQUAL_UINT(0, view_model_text_count_replacements("Boxer"));
+}
+
+static void test_count_replacements_counts_each_one(void)
+{
+    /* Same fixture as test_truncated_continuation_sequence_replaces_each_
+     * bad_byte above: two independently-bad bytes, two replacements. */
+    char buf[16];
+    view_model_text_copy_safe(buf, sizeof(buf), "\xE2\x82");
+    TEST_ASSERT_EQUAL_UINT(2, view_model_text_count_replacements(buf));
+}
+
+static void test_count_replacements_does_not_overcount_real_text_resembling_the_pattern(void)
+{
+    /* The replacement char's own bytes (EF BF BD) never occur inside a
+     * well-formed ASCII/short-multibyte string by coincidence, but a
+     * naive byte-at-a-time scan that doesn't skip a full match could
+     * still double-count on adjacent runs -- three back-to-back
+     * replacements must count as 3, not more. */
+    TEST_ASSERT_EQUAL_UINT(3, view_model_text_count_replacements("\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD"));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -183,5 +212,9 @@ int main(void)
     RUN_TEST(test_has_content_false_for_entirely_replacement_chars);
     RUN_TEST(test_has_content_true_for_real_text);
     RUN_TEST(test_has_content_true_when_mixed_with_replacement_chars);
+    RUN_TEST(test_count_replacements_zero_for_null);
+    RUN_TEST(test_count_replacements_zero_for_clean_text);
+    RUN_TEST(test_count_replacements_counts_each_one);
+    RUN_TEST(test_count_replacements_does_not_overcount_real_text_resembling_the_pattern);
     return UNITY_END();
 }

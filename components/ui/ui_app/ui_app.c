@@ -11,6 +11,13 @@
 
 static const char *TAG = "ui_app";
 
+#define UI_DIAG_PUBLISH_PERIOD_US (1 * 1000 * 1000)   /* Tier 7 -- ui_diag_state_t is
+                                                          "counters, not rates"; no need
+                                                          to publish faster than
+                                                          svc_diagnostics's own report
+                                                          reads it (DIAGNOSTICS_TICK_
+                                                          PERIOD_US, app_wiring.c, 5s) */
+
 #define UI_APP_TICK_PERIOD_US    2000
 #define UI_APP_LOOP_MAX_DELAY_MS 16
 #define UI_APP_TASK_STACK_BYTES  (12 * 1024)   /* ARCHITECTURE.md §4: "ui", core 1, prio 4, 12KB */
@@ -98,6 +105,21 @@ static void ui_app_task(void *arg)
     while (!app->task_should_stop) {
         int64_t loop_start_us = esp_timer_get_time();
 
+#ifdef CONFIG_DSC_TEST_FORCE_UI_STALL
+        /* RISKS.md R10's rollback proof, same shape as app_wiring.c's own
+         * CONFIG_DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT: a deliberate, Kconfig-
+         * gated real stall, never fed to the watchdog before it blocks, to
+         * prove the task watchdog (CONFIG_ESP_TASK_WDT_TIMEOUT_S=10,
+         * sdkconfig.defaults) actually catches a real UI-task freeze and
+         * reboots with a coredump -- not just cited as a mitigation.
+         * tools/check_release.py refuses a production profile with this
+         * set. Every boot re-triggers it on purpose: this build is only
+         * ever flashed for the one deliberate test, then reflashed back to
+         * a normal build, not left running. */
+        ESP_LOGW(TAG, "DSC_TEST_FORCE_UI_STALL set -- UI task will not feed the watchdog for 15s");
+        vTaskDelay(pdMS_TO_TICKS(15000));
+#endif
+
         /* drain_event_queue(0) -- no dedicated UI-task event queue exists;
          * view_model_now_playing_apply_tick() drains its own core_eventbus
          * subscriptions directly (never blocking, matching the same "zero
@@ -111,6 +133,19 @@ static void ui_app_task(void *arg)
         ui_app_watchdog_feed();   /* reached only once lv_timer_handler() has actually
                                      returned -- real observed progress, not a bare
                                      per-iteration feed (ui_app_watchdog.h) */
+
+        /* Tier 7: DOMAIN_UI publish, throttled to ~1/s -- frame/drop
+         * counters (hal_display.h) and R17's cumulative glyph-fallback
+         * count (view_model_now_playing_apply.h). A legal ui->core edge,
+         * no app_wiring mediation needed (svc_diagnostics reads this same
+         * domain directly on its own report_tick(), also a legal edge). */
+        if (loop_end_us - app->ui_diag_last_publish_us >= UI_DIAG_PUBLISH_PERIOD_US) {
+            app->ui_diag_last_publish_us = loop_end_us;
+            ui_diag_state_t diag = { 0 };
+            hal_display_get_frame_counters(app->hal_disp, &diag.frames_rendered, &diag.frames_dropped);
+            diag.unrepresentable_glyph_count = view_model_now_playing_apply_glyph_fallback_count(&app->np_apply);
+            core_state_write(app->state, DOMAIN_UI, LINK_STATUS_OK, &diag, sizeof(diag));
+        }
 
         uint32_t delay_ms = (next_ms < UI_APP_LOOP_MAX_DELAY_MS) ? next_ms : UI_APP_LOOP_MAX_DELAY_MS;
         if (delay_ms == 0) {
@@ -129,6 +164,7 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
 {
     app->hal_disp           = cfg->hal_disp;
     app->hal_touch          = cfg->hal_touch;
+    app->state               = cfg->state;
     app->artwork_pixels     = cfg->artwork_pixels;
     app->lv_disp             = NULL;
     app->lv_touch_indev     = NULL;
@@ -137,6 +173,7 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     app->task_should_stop  = false;
     app->stopped_sem         = NULL;
     app->has_rendered_frame = false;
+    app->ui_diag_last_publish_us = 0;
 
     lv_init();
 

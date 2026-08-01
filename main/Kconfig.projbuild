@@ -46,6 +46,18 @@ config DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT
         in a shipping build -- tools/check_release.py fails a production
         profile that has this set.
 
+config DSC_TEST_FORCE_UI_STALL
+    bool "Force the UI task to stall for 15s without feeding the watchdog (test only)"
+    default n
+    help
+        Blocks the UI task's own loop for 15s, longer than
+        CONFIG_ESP_TASK_WDT_TIMEOUT_S (10s), before it would otherwise feed
+        the task watchdog -- exists solely to prove RISKS.md R10's
+        mitigation ("a stall becomes a reboot with a coredump") actually
+        catches a real stall on real hardware, not just cited. Must never
+        be enabled in a shipping build -- tools/check_release.py fails a
+        production profile that has this set.
+
 config DSC_DENON_DEBUG_CONSOLE
     bool "Start a UART debug console for exercising svc_denon (dev convenience)"
     default n

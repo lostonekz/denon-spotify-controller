@@ -29,7 +29,10 @@ extern "C" {
 typedef enum {
     HEALTH_COND_BOOT_COMPLETE = 0,
     HEALTH_COND_TASKS_OK,           /* merged "feeding WDT" + "no trip" */
-    HEALTH_COND_PANEL_UI,           /* Phase 2 stand-in: hardcoded true */
+    HEALTH_COND_PANEL_UI,           /* real since Phase 5 Tier 4 -- ui_app_has_rendered_frame(),
+                                        polled every tick by health_gate_relay_tick_trampoline()
+                                        (app_wiring_ticks.c). Was a hardcoded-true stand-in only
+                                        in Phase 2, before hal_display/ui existed. */
     HEALTH_COND_STORAGE_MOUNTED,
     HEALTH_COND_WIFI_IP,
     HEALTH_COND_SNTP_SYNCED,

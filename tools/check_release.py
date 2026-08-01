@@ -39,6 +39,8 @@ PROD_REQUIRED = [
      "factory-test code must not ship"),
     ("CONFIG_DSC_TEST_FORCE_HEALTH_GATE_TIMEOUT", None,
      "test-only gate-timeout override must not ship"),
+    ("CONFIG_DSC_TEST_FORCE_UI_STALL", None,
+     "test-only UI-task stall injection must not ship"),
     ("CONFIG_DSC_DENON_DEBUG_CONSOLE", None,
      "debug console must not ship"),
     ("CONFIG_DSC_SPOTIFY_DEBUG_CONSOLE", None,

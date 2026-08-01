@@ -175,7 +175,7 @@ bool app_wiring_create(app_ctx_t *ctx)
         return false;
     }
 
-    if (!svc_diagnostics_create(&ctx->diagnostics, &ctx->bus, ctx->diagnostics_kv, clock)) {
+    if (!svc_diagnostics_create(&ctx->diagnostics, &ctx->bus, &ctx->state, ctx->diagnostics_kv, clock)) {
         ESP_LOGE(TAG, "svc_diagnostics_create failed");
         return false;
     }

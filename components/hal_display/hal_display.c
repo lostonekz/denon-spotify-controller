@@ -226,3 +226,13 @@ fail:
     disp->io     = NULL;   /* ST7701 driver owns and deletes the panel IO along with itself */
     return err;
 }
+
+void hal_display_get_frame_counters(const hal_display_t *disp, uint32_t *out_rendered, uint32_t *out_dropped)
+{
+    if (out_rendered != NULL) {
+        *out_rendered = disp->frames_rendered;
+    }
+    if (out_dropped != NULL) {
+        *out_dropped = disp->frames_dropped;
+    }
+}

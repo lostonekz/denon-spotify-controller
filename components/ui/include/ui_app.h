@@ -56,6 +56,11 @@ typedef struct {
 typedef struct {
     hal_display_t         *hal_disp;
     hal_touch_t             *hal_touch;
+    core_state_t              *state;   /* Tier 7: ui_app_task's own periodic
+                                            DOMAIN_UI publish (frame/drop
+                                            counters, R17's glyph-fallback
+                                            count) -- a legal ui->core edge,
+                                            no mediation needed */
     lv_display_t              *lv_disp;
     lv_indev_t                  *lv_touch_indev;
     artwork_pixel_provider_t       artwork_pixels;
@@ -77,15 +82,24 @@ typedef struct {
     volatile bool           has_rendered_frame;   /* set true the first time the flush
                                                       * callback actually runs -- feeds
                                                       * HEALTH_COND_PANEL_UI (app_wiring_ui.c) */
+
+    int64_t                   ui_diag_last_publish_us;   /* Tier 7: throttles the DOMAIN_UI
+                                                              publish to ~1/s, not every loop
+                                                              iteration -- "counters, not rates"
+                                                              (app_state_types.h's own comment
+                                                              on ui_diag_state_t) doesn't need
+                                                              publishing at LVGL's own cadence */
 } ui_app_t;
 
 /* cfg->hal_disp/hal_touch/state/bus must already be initialized. Creates
- * the LVGL display bound to the two RGB panel framebuffers directly
- * (LV_DISPLAY_RENDER_MODE_FULL -- no separate LVGL-owned draw buffer, no
- * extra copy), a touch input device backed by hal_touch's GT911 handle,
- * the 2ms esp_timer LVGL tick, ui_router (Now Playing real, Denon/Settings
- * still stub), and the dedicated UI task (core 1, prio 4, 12KB stack,
- * ARCHITECTURE.md §4). */
+ * the LVGL display (LV_DISPLAY_RENDER_MODE_PARTIAL against a small LVGL-
+ * owned PSRAM draw buffer, a single hal_disp framebuffer underneath --
+ * hal_display.h's own top comment has the real-hardware finding behind
+ * this, corrected from an earlier draft of this comment that described the
+ * withdrawn 2-framebuffer/full-frame design), a touch input device backed
+ * by hal_touch's GT911 handle, the 2ms esp_timer LVGL tick, ui_router (Now
+ * Playing real, Denon/Settings still stub), and the dedicated UI task
+ * (core 1, prio 4, 12KB stack, ARCHITECTURE.md §4). */
 bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg);
 void ui_app_teardown(void *handle);
 

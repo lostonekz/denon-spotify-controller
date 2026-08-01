@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "view_model_text.h"
 #include "w_toast.h"
 
 /* EVENTS_AND_STATE.md §6.3 step 5: "A pending intent that goes unconfirmed
@@ -43,6 +44,7 @@ bool view_model_now_playing_apply_init(view_model_now_playing_apply_t *a, core_s
     a->pending                  = false;
     a->pending_seq                = 0;
     a->pending_since_us            = 0;
+    a->glyph_fallback_count           = 0;
 
     if (!core_eventbus_subscribe(bus, TOPIC_PLAYBACK, a->playback_sub_storage, 4, &a->playback_sub)) {
         return false;
@@ -110,5 +112,20 @@ void view_model_now_playing_apply_tick(view_model_now_playing_apply_t *a)
     strncpy(u.artwork_track_id, art.track_id, sizeof(u.artwork_track_id) - 1);
     u.artwork_track_id[sizeof(u.artwork_track_id) - 1] = '\0';
 
+    /* RISKS.md R17's glyph-fallback counter -- title/artist are the only
+     * two fields screen_now_playing.c actually renders (album only ever
+     * reaches the screen as build_title_with_fallback()'s fallback INTO
+     * title when title itself is empty, view_model_now_playing.c, so
+     * scanning title+artist covers everything a real substitution could
+     * be visible in). Cumulative, never reset -- same "counter, not rate"
+     * contract as ui_diag_state_t's other two fields (app_state_types.h). */
+    a->glyph_fallback_count += (uint32_t)view_model_text_count_replacements(u.vm.title);
+    a->glyph_fallback_count += (uint32_t)view_model_text_count_replacements(u.vm.artist);
+
     ui_router_update(a->router, UI_SCREEN_NOW_PLAYING, &u);
+}
+
+uint32_t view_model_now_playing_apply_glyph_fallback_count(const view_model_now_playing_apply_t *a)
+{
+    return a->glyph_fallback_count;
 }

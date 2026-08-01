@@ -118,3 +118,23 @@ bool view_model_text_has_content(const char *s)
     }
     return false;   /* empty, or entirely U+FFFD */
 }
+
+size_t view_model_text_count_replacements(const char *s)
+{
+    if (s == NULL) {
+        return 0;
+    }
+
+    size_t len = strlen(s);
+    size_t count = 0;
+    size_t i = 0;
+    while (i + VM_REPLACEMENT_LEN <= len) {
+        if (memcmp(s + i, VM_REPLACEMENT_UTF8, VM_REPLACEMENT_LEN) == 0) {
+            count++;
+            i += VM_REPLACEMENT_LEN;
+        } else {
+            i++;
+        }
+    }
+    return count;
+}

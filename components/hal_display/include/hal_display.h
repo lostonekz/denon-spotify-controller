@@ -70,6 +70,15 @@ typedef struct {
  * the single framebuffer pointer, and registers the VSYNC frame counter. */
 esp_err_t hal_display_init(hal_display_t *disp, bsp_io_expander_t *expander);
 
+/* Lockless reads of the two volatile counters above -- approximate by
+ * construction (no snapshot atomicity between the two words), which is
+ * fine for a diagnostics counter read at most a few times a second, the
+ * same tolerance every other svc_diagnostics figure (heap, stack
+ * high-water) already accepts. frames_dropped reads back 0 today (see its
+ * own field comment) -- exposed anyway so the DOMAIN_UI publish site
+ * doesn't need updating the day it becomes real. */
+void hal_display_get_frame_counters(const hal_display_t *disp, uint32_t *out_rendered, uint32_t *out_dropped);
+
 #ifdef __cplusplus
 }
 #endif
