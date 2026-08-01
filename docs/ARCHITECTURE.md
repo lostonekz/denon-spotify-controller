@@ -56,10 +56,11 @@ low, which is what lets us move quickly on everything else.
 
 ### 0.2 Security is built now and enabled in stages
 
-This is a personal device today with a realistic path to becoming a product. Both of the
-obvious postures are wrong: shipping a hobby-grade device and retrofitting security later is
-the expensive case study everyone knows, and burning eFuses on a hand-assembled board
-violates §0.1.
+This is a personal dev/test device — that's the only thing it is right now, not a product in
+progress (production-track work is parked, not deleted; see
+[PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md)). Even so, retrofitting security later if
+that ever changes is the expensive case study everyone knows, and burning eFuses on a
+hand-assembled board violates §0.1 regardless.
 
 So the mechanisms are **built and always running**; only their trust anchor and enforcement
 severity are staged:

@@ -319,30 +319,12 @@ error.
 
 ---
 
-## R15 — Anti-rollback is one-way in production
+## R15 / R16 — parked
 
-**Risk.** `security_version` is monotonic and, in the production profile, backed by an eFuse
-counter that cannot be rewound. Bumping it casually — or bumping it in a release that later
-turns out to be broken — permanently blocks downgrade to the last known-good firmware.
-
-**Mitigation.** `security_version` is bumped **only** for a release that fixes something
-which must not be rolled back past, never as part of routine versioning. It has a dedicated
-release-checklist item requiring explicit justification. In the development profile it is
-enforced from NVS only, so it stays recoverable while the discipline is being established.
-
----
-
-## R16 — Signing key loss or compromise
-
-**Risk.** The release key signs firmware for devices reachable only over the air. Loss ends
-updateability; compromise allows hostile firmware.
-
-**Mitigation.** Two trust anchors (`current` + `next`) shipped in every image, so rotation
-is possible without physical access as long as one valid key survives
-([SECURITY.md](SECURITY.md) §4). The dev key is committed to the repo deliberately and
-protects nothing, which keeps the verification path exercised on every build. The release
-key is backed up independently of the source tree, with the location recorded in project
-operational notes rather than in one person's memory — see R14.
+Both were about the production profile specifically (anti-rollback backed by an eFuse
+counter that doesn't exist yet; loss/compromise of a release key that hasn't been created
+yet) — neither is a live risk on a dev-only device with no eFuses burned and no release key
+issued. Full text parked in [PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md), not deleted.
 
 ---
 

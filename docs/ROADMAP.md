@@ -3,6 +3,11 @@
 Sequenced to retire risk early and to get a *usable* device in hand quickly, because a
 device you live with reveals design problems that no amount of review does.
 
+**This is currently a personal dev/test device, not a product in progress.** Production-track
+work (manufacturing, factory test, Secure Boot/flash encryption, RMA/fleet operations) is
+parked in [PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md), not deleted — see that file for
+why and for what moves back here if that changes.
+
 ---
 
 ## Phase 0 — Bring-up and risk spike
@@ -236,40 +241,12 @@ task, and clean recovery from every fault in the matrix.
 
 ---
 
-## Phase 7b — Production profile dry run (one sacrificial unit)
+## Phase 7b / Phase 8 — parked
 
-Scheduled, and **before** any product decision. The point of building security in stages is
-lost if the production profile is first exercised on the day it must work.
-
-- Build the production profile with a throwaway release key.
-- Verify the production build gate rejects: dev anchor present, assertions on, console on.
-- Flash one **sacrificial** unit, enable encrypted NVS, burn Secure Boot v2 and flash
-  encryption. Expect to lose this board; that is what it is for.
-- Confirm signed OTA still works on a secure-booted unit, that rotation works, and that
-  anti-rollback holds against the eFuse counter.
-- Time and document the manufacturing sequence.
-
-**Exit criteria:** a written procedure and a known cost, rather than an assumption. If the
-production profile turns out not to work, this is the cheapest possible moment to find out —
-one board, no customers.
-
----
-
-## Phase 8 — Production readiness (only if it becomes a product)
-
-Not scheduled. Listed so the trigger conditions are written down rather than rediscovered.
-
-- Swap the dev trust anchor for an offline release key; verify rotation works on real units
-- Enable encrypted NVS (`nvs_keys` already reserved)
-- Decide Secure Boot v2 and flash encryption against a manufacturing threat model
-- Factory test fixture and pass/fail criteria ([SECURITY.md](SECURITY.md) §7)
-- eFuse burn station — **last step, after factory test passes**, since it is the step that
-  makes a failed unit unrecoverable
-- RMA flow: redacted diagnostics export, zeroising factory reset
-- Staged-rollout OTA hosting, if fleet size justifies it
-
-Everything here is a config change or a procedure. None of it is a redesign — which is the
-entire return on doing [adr/0006](adr/0006-staged-security.md) now rather than later.
+This project is a personal dev/test device for the time being, not a product in progress —
+the production profile dry run and production-readiness work that used to sit here are
+parked, in full, in [PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md). Nothing was decided
+against; it's out of the active roadmap until that changes.
 
 ---
 

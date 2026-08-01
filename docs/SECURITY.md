@@ -193,38 +193,15 @@ not just a wording fix — it deserves a deliberate second look, not only an aut
 
 ---
 
-## 7. Manufacturing and field operations
+## 7. Manufacturing and field operations — parked
 
-Sketched now so the production profile is a procedure rather than a research project. Not
-built until it is needed.
-
-| Stage | Actions |
-|---|---|
-| **Flash** | partition table, dev or release image, per-unit ID written to NVS |
-| **Factory test** | panel + touch + backlight sweep, WiFi scan + associate, PSRAM/flash integrity, IMU present, temperature sane. Pass/fail on screen; result stored. |
-| **Secure enable** (production only) | burn Secure Boot v2 + flash encryption eFuses. **Point of no return** — after this the unit cannot be reflashed unsigned. Runs last, after factory test passes. |
-| **Field** | OTA only. No inbound services. Diagnostics screen behind a long-press. |
-| **Factory reset** | zeroise `secure`, erase `settings`, erase SPIFFS cache, reboot to provisioning. Firmware slot untouched. |
-| **RMA** | coredump + diagnostics export (redacted) retrievable over USB or the local network before reset. |
-
-The ordering matters: **eFuse burn is the last step and only after the unit has passed
-every other test**, because it is the step that makes a failed unit unrecoverable.
+This device is a personal dev/test unit for the time being, not a product in progress. The
+manufacturing/field-ops procedure and the `factory_test` component design that used to sit
+here as §7/§7b are parked, in full, in
+[PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md). Nothing was decided against; it moves back
+here if that changes.
 
 ---
-
-## 7b. Factory test is a separate component
-
-`factory_test` is its own component with its own entry point, **not** a mode bolted into the
-application. Manufacturing logic embedded in app code is how test hooks end up in shipped
-firmware.
-
-- Built only under `CONFIG_DSC_FACTORY_TEST`, which the production build gate
-  (ARCHITECTURE §1.4, gate 4) fails on for a shipping profile.
-- It links `bsp_board` and `hal_*` directly and does **not** link `ui`, `svc_spotify`, or
-  `svc_denon` — it is a hardware exerciser, not the product.
-- Results are written to a dedicated NVS namespace and displayed as pass/fail with a fault
-  code. The eFuse burn station reads that namespace and **refuses to burn a unit that has
-  not passed**, which is what makes the ordering in §7 enforceable rather than procedural.
 
 ## 7c. Diagnostics export schema and consent
 
@@ -248,14 +225,9 @@ deliberately adds it. Denylists fail open, which is the wrong direction for this
 Consent: export is always a deliberate user action from the diagnostics screen, shows a
 preview of what will be included, and is never automatic or background.
 
-## 8. What is deliberately not decided yet
+## 8. What is deliberately not decided yet — parked
 
-These need a real answer before a production run, and none of them block Phase 0–7:
-
-- Whether units get individual device certificates, or share a firmware trust anchor only.
-- Whether Secure Boot v2 is worth its recovery cost at the intended volume.
-- Whether OTA hosting moves from static files to a server that can do staged rollout.
-- Privacy: what a diagnostics export may contain if it ever leaves the user's network.
-
-Under ARCHITECTURE §0.1 each of these stays open because the partition table reserves the
-space, the manifest carries the fields, and the verification path already runs.
+The list of production-run open questions (device certificates, Secure Boot v2's recovery
+cost, staged-rollout OTA hosting, export privacy at fleet scale) is parked in
+[PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md) along with everything else in this file's
+old §7/§7b. None of it blocks Phase 0–7 — that was true before and stays true now.
