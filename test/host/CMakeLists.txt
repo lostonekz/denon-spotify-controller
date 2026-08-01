@@ -392,24 +392,38 @@ target_include_directories(test_spotify_progress PRIVATE
     "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
-# cJSON is ESP-IDF's own built-in `json` component -- vendored on disk in
-# every ESP-IDF install already, no network fetch needed here. $ENV{IDF_PATH}
-# must be set (export.ps1/export.sh sourced) to configure this target.
-# TO_CMAKE_PATH: IDF_PATH is backslash-separated on Windows, which CMake's
-# string parser can misread as escape sequences (e.g. "...\esp-idf..." ->
-# "\e") when substituted raw into a quoted argument.
-if(NOT DEFINED ENV{IDF_PATH})
-    message(FATAL_ERROR "IDF_PATH is not set -- source ESP-IDF's export script first (test_spotify_parse needs cJSON from the IDF tree)")
+# cJSON -- vendored via FetchContent, same reasoning and pattern as Unity
+# above (pinned to an exact tag, no manual install). Originally read straight
+# out of $ENV{IDF_PATH}/components/json/cJSON (ESP-IDF's own vendored copy,
+# no extra fetch needed on a machine that already has ESP-IDF) -- found
+# broken by CI (host-tests jobs deliberately don't set up ESP-IDF, per this
+# file's own "needs only a C compiler" design principle above), silently
+# masked locally by every dev machine already having IDF_PATH set from
+# building the firmware in the same shell. FetchContent_Populate() only
+# fetches the source, deliberately not FetchContent_MakeAvailable() --
+# cJSON.c is compiled directly into test_spotify_parse below, the same way
+# the IDF-tree copy was, not built as a separate library with cJSON's own
+# CMakeLists and its own set of build options to reconcile with this
+# project's -Werror host flags. v1.7.18 matches ESP-IDF v5.5's own vendored
+# version exactly (components/json/cJSON/cJSON.h's CJSON_VERSION_* defines),
+# so this is the same code the target build actually links, not a drifted
+# substitute.
+FetchContent_Declare(cjson
+    GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+    GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE)
+FetchContent_GetProperties(cjson)
+if(NOT cjson_POPULATED)
+    FetchContent_Populate(cjson)
 endif()
-file(TO_CMAKE_PATH "$ENV{IDF_PATH}" IDF_PATH_CMAKE)
 dsc_add_host_test(test_spotify_parse
     test_spotify_parse.c
     "${REPO_ROOT}/components/svc_spotify/spotify_parse.c"
-    "${IDF_PATH_CMAKE}/components/json/cJSON/cJSON.c")
+    "${cjson_SOURCE_DIR}/cJSON.c")
 target_include_directories(test_spotify_parse PRIVATE
     "${REPO_ROOT}/components/svc_spotify/include"
     "${REPO_ROOT}/components/core_types/include"
-    "${IDF_PATH_CMAKE}/components/json/cJSON"
+    "${cjson_SOURCE_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}")
 target_compile_definitions(test_spotify_parse PRIVATE
     "FIXTURES_DIR=\"${CMAKE_CURRENT_LIST_DIR}/fixtures\"")
