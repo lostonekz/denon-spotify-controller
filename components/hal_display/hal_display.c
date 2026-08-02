@@ -26,12 +26,36 @@
  * slack against contention, and a real board showed exactly that -- corner
  * sparkle and a periodic few-pixel vertical shift (CONFIG_LCD_RGB_RESTART_
  * IN_VSYNC=y recovering from a real underrun, not a cosmetic-only glitch).
- * Restoring the original 20 rows is safe now, not a re-guess: fixing the
- * separate LVGL memory-pool bug (ui_app.c) also shrank
- * CONFIG_LV_MEM_SIZE_KILOBYTES from 64 to 24, a permanent .bss reservation
- * that applies here too since it's link-time, not runtime-ordered -- real
- * measurement at this exact point now shows 73 KiB free / 38.9 KiB largest
- * block, comfortably over the 19.2 KiB each of the two allocations needs. */
+ * Restoring the original 20 rows was safe once the separate LVGL memory-
+ * pool bug (ui_app.c) shrank CONFIG_LV_MEM_SIZE_KILOBYTES from 64 to 24 (a
+ * permanent .bss reservation that applies here too since it's link-time,
+ * not runtime-ordered) -- measurement at that point showed 73 KiB free /
+ * 38.9 KiB largest block, comfortably over the 19.2 KiB each of the two
+ * allocations needed.
+ *
+ * Briefly raised to 32 rows (Phase 5, chasing a real-hardware white-lines/
+ * dots-on-the-left-edge report) and confirmed WRONG by real hardware, not
+ * just reverted on suspicion: the extra 12 rows cost ~22.5 KiB more
+ * permanent internal-RAM reservation (2 buffers x 12 rows x 480px x 2B),
+ * and real logs immediately after flashing it showed internal_free_min
+ * crashing from ~10 KiB to as low as 539 bytes, with mbedTLS's dynamic TLS
+ * buffer impl failing outright ("Dynamic Impl: alloc(16749 bytes) failed")
+ * on every artwork fetch from i.scdn.co -- the exact ~16.7 KiB real-record
+ * growth this project's own sdkconfig.defaults TLS-memory comment already
+ * documents needing. Net effect: no artwork loaded at all, plus a new,
+ * worse "screen moving up and down" flicker (consistent with the RGB
+ * peripheral restarting far more often once internal-RAM contention got
+ * this severe, CONFIG_LCD_RGB_RESTART_IN_VSYNC=y firing constantly instead
+ * of occasionally). This confirms the bottleneck here is NOT bounce-buffer
+ * size/DMA-refill lookahead -- growing it only made a real, scarce, shared
+ * resource (internal RAM) scarcer for a completely different subsystem
+ * (mbedTLS). Back to 20 rows, the same figure real hardware already
+ * confirmed safe (73 KiB free / 38.9 KiB largest block at hal_display_
+ * init() time, comfortably over the 19.2 KiB/buffer this needs). The
+ * original white-lines/dots report is still unexplained and still open --
+ * see hal_display.h's own top comment on the single-framebuffer/partial-
+ * render tradeoff for the leading remaining theory (direct tearing on the
+ * shared framebuffer, which no bounce-buffer size can fix either way). */
 #define HAL_DISPLAY_BOUNCE_ROWS 20
 
 /* The real ST7701 init sequence, ported verbatim (register bytes and
@@ -131,14 +155,23 @@ esp_err_t hal_display_init(hal_display_t *disp, bsp_io_expander_t *expander)
         .clk_src        = LCD_CLK_SRC_DEFAULT,
         .data_width      = 16,
         .bits_per_pixel = 16,   /* RGB565 -- CONFIG_LV_COLOR_DEPTH_16, sdkconfig.defaults */
-        /* Single framebuffer, not double -- see hal_display.h's own top
-         * comment for the real-hardware finding behind this (Phase 5 Tier
-         * 7): with LV_DISPLAY_RENDER_MODE_PARTIAL (ui_app.c), a second
-         * buffer would only reintroduce the exact staleness problem partial
-         * updates need to avoid, since esp_lcd_rgb_panel's own
-         * draw_bitmap() writes partial updates into whichever framebuffer
-         * index is "current" (confirmed by reading esp_lcd_panel_rgb.c
-         * directly) -- consistent frame-to-frame only with exactly one. */
+        /* Single framebuffer -- see hal_display.h's own top comment. A
+         * num_fbs=2 + LV_DISPLAY_RENDER_MODE_FULL diagnostic swap was
+         * tried and made things WORSE, confirmed by real hardware, not
+         * just reverted on suspicion: esp_lcd_panel_rgb.c's own
+         * rgb_panel_draw_bitmap() (read directly) shows that with bounce
+         * buffers active (this config always uses them), swapping
+         * cur_fb_index happens immediately/synchronously in flush_cb, with
+         * no wait for the CURRENT frame's scan-out to finish first -- the
+         * bounce-buffer refill ISR reads whichever buffer is "current" at
+         * whatever row it happens to be mid-scan, so a swap that lands
+         * mid-frame can start pulling from a buffer LVGL only just started
+         * drawing into. Real symptom: static black partial frames, up to
+         * the bottom ~70% of the screen, exactly the undrawn region of a
+         * buffer caught mid-draw. Fixing this properly needs flush_ready
+         * gated on a real VSYNC boundary after the swap, not synchronous
+         * in flush_cb -- more involved than this diagnostic's quick
+         * wiring, not attempted here. */
         .num_fbs          = 1,
         .bounce_buffer_size_px = BSP_LCD_H_RES * HAL_DISPLAY_BOUNCE_ROWS,
         .dma_burst_size  = 64,

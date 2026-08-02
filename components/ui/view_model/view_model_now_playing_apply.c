@@ -42,8 +42,8 @@ bool view_model_now_playing_apply_init(view_model_now_playing_apply_t *a, core_s
     a->real_submit          = real_submit;
     a->clock                  = clock;
     a->pending                  = false;
-    a->pending_seq                = 0;
-    a->pending_since_us            = 0;
+    a->pending_seq                    = 0;
+    a->pending_since_us                = 0;
     a->glyph_fallback_count           = 0;
 
     if (!core_eventbus_subscribe(bus, TOPIC_PLAYBACK, a->playback_sub_storage, 4, &a->playback_sub)) {
@@ -111,6 +111,8 @@ void view_model_now_playing_apply_tick(view_model_now_playing_apply_t *a)
     u.artwork_handle = art.handle;
     strncpy(u.artwork_track_id, art.track_id, sizeof(u.artwork_track_id) - 1);
     u.artwork_track_id[sizeof(u.artwork_track_id) - 1] = '\0';
+    strncpy(u.playback_track_id, pb.track_id, sizeof(u.playback_track_id) - 1);
+    u.playback_track_id[sizeof(u.playback_track_id) - 1] = '\0';
 
     /* RISKS.md R17's glyph-fallback counter -- title/artist are the only
      * two fields screen_now_playing.c actually renders (album only ever

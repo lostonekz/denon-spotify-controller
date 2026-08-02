@@ -33,11 +33,10 @@ typedef enum {
     PLAYBACK_INTENT_SET_VOLUME,
 } playback_intent_kind_t;
 
-/* Packed into intent_t.payload (16 B, plenty of room). */
 typedef struct {
-    uint8_t volume_pct;    /* PLAYBACK_INTENT_SET_VOLUME -- 0-100, clamped by spotify_intent.c */
-    bool    shuffle;       /* PLAYBACK_INTENT_SET_SHUFFLE */
-    uint8_t repeat_mode;   /* PLAYBACK_INTENT_SET_REPEAT -- matches playback_state_t's representation */
+    uint8_t  volume_pct;         /* PLAYBACK_INTENT_SET_VOLUME -- 0-100, clamped by spotify_intent.c */
+    bool     shuffle;            /* PLAYBACK_INTENT_SET_SHUFFLE */
+    uint8_t  repeat_mode;        /* PLAYBACK_INTENT_SET_REPEAT -- matches playback_state_t's representation */
 } playback_intent_payload_t;
 
 #ifdef __cplusplus

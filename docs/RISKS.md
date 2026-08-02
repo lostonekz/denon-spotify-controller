@@ -146,6 +146,51 @@ that no longer exists, not a real cost of a lower refresh rate. **Current settin
 LVGL-owned draw buffer, 20-row (38 KiB) bounce buffers unchanged.** Settled at 30 Hz for the
 PSRAM-bandwidth headroom it frees over 60 Hz, with no observed visual cost.
 
+**Real-hardware update (2026-08-02) — three more real findings against this same risk,
+chasing a fresh visual-artifact report on Now Playing content:**
+
+1. **A leftover diagnostic flag, not a rendering bug, caused "white lines/dots popping up on
+   the left edge of the screen."** `CONFIG_HEAP_POISONING_COMPREHENSIVE` had been switched on
+   during an unrelated LVGL-allocation investigation (a device-switcher feature, since fully
+   reverted) and never turned back off. Its real CPU cost (a periodic full-heap integrity
+   walk around allocations) was contending with the LCD's own DMA bounce-buffer refill ISR
+   for the same internal-RAM bus — exactly this section's own subject matter, just from a
+   source R1 had never previously considered (a debug-only Kconfig option, not application
+   load). Fixed by disabling it again (`CONFIG_HEAP_POISONING_DISABLED=y`); the artifact has
+   not recurred since.
+2. **`num_fbs=2` + `LV_DISPLAY_RENDER_MODE_FULL` (real double-buffering) was retried, on the
+   theory that the single-buffer/PARTIAL config above might itself be the cause of a
+   *different*, newly-reported symptom (see #3) — and confirmed WORSE, not reverted on
+   suspicion.** Real symptom: static black partial frames, up to the bottom ~70% of the
+   screen. Root cause, confirmed by reading `esp_lcd_panel_rgb.c`'s `rgb_panel_draw_bitmap()`
+   directly: with bounce buffers active (this config always uses them), swapping
+   `cur_fb_index` happens immediately/synchronously when `flush_cb` calls
+   `esp_lcd_panel_draw_bitmap()`, with no wait for the CURRENT frame's real scan-out to
+   finish first — the bounce-buffer refill ISR reads whichever buffer is "current" at
+   whatever row it happens to be mid-scan, so a swap landing mid-frame can start pulling from
+   a buffer LVGL only just started drawing into. Fixing double-buffering correctly here would
+   need `lv_display_flush_ready()` gated on a real VSYNC boundary after the swap actually
+   takes effect, not synchronous inside `flush_cb` — not attempted; reverted back to
+   `num_fbs=1`/PARTIAL instead. See `hal_display.h`'s own top comment for the full account.
+3. **A distinct "vertical anchor jitter" symptom — the progress bar/transport/labels
+   visibly jumping to a different vertical position on nearly every frame, while the art card
+   (redrawn only on a real track change) stayed rock stable — is NOT the same thing as the
+   "fixed-interval vertical shift" documented under the Phase 5 Tier 7 update above (that one
+   was `svc_diagnostics`'s scheduler-freeze bug, already fixed).** One fix attempt (giving the
+   bottom stack a fixed height instead of `LV_SIZE_CONTENT`, removing a theoretical per-tick
+   layout-recompute dependency) did not resolve it. It stopped being visible once the
+   `num_fbs=2` experiment above was reverted back to the known-safe config — consistent with,
+   but not proof of, this section's own PSRAM-bandwidth-contention theory: real Now Playing
+   content redraws the progress bar/transport/labels every tick, exactly the kind of
+   frequently-touched region this risk's original ~6.7–7.1% figure was measured against, just
+   never visually this prominent against Phase 0's plain gradient test pattern. Not fully
+   root-caused — treated as fragile-but-currently-working, not solved.
+
+**Still open, separately:** JPEG decode timing (avg 660 ms / max ~1.8 s against a 400 ms
+budget) is real and unresolved — see above. A related but distinct problem, JPEG decode
+*failure* (truncated input, `JDR_INP`), was found and fixed this same session: see
+[MEMORY.md](MEMORY.md) §1 for the staging-buffer size history and the bounded-retry fix.
+
 ---
 
 ## R2 — Denon telnet is single-client, device-wide

@@ -170,18 +170,6 @@ void svc_diagnostics_report_tick(svc_diagnostics_t *d)
              (unsigned)ui_diag.frames_rendered, (unsigned)ui_diag.frames_dropped,
              (unsigned)ui_diag.unrepresentable_glyph_count);
 
-    /* Temporary (Tier 7 live debugging): DOMAIN_PLAYBACK's real contents,
-     * passively in the log stream -- this board's debug console has a
-     * known, previously-documented input reliability issue over its
-     * native USB-CDC port from Windows, so "type spotify status and read
-     * the reply" isn't a dependable diagnostic path right now. Remove
-     * once the artwork/metadata TLS read-failure investigation concludes. */
-    playback_state_t pb_diag = { 0 };
-    core_state_read(d->state, DOMAIN_PLAYBACK, &pb_diag, sizeof(pb_diag));
-    ESP_LOGI(TAG, "playback: title=\"%s\" artist=\"%s\" is_playing=%s pos=%" PRIu32 "ms status=%d",
-             pb_diag.title, pb_diag.artist, pb_diag.is_playing ? "yes" : "no",
-             pb_diag.position_ms, (int)pb_diag.meta.status);
-
     resolve_task_handles_once();
     for (size_t i = 0; i < DIAG_TASK_COUNT; i++) {
         if (s_diag_task_handles[i] == NULL) {

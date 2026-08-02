@@ -11,21 +11,14 @@
 
 static const char *TAG = "svc_artwork";
 
-/* ARCHITECTURE.md §4's table originally planned 6 KiB ("artwork", core 0,
- * prio 3). Real hardware (Tier 7, chasing a live artwork-fetch failure
- * against the real Spotify CDN) measured stack_hwm=484 bytes remaining
- * out of that 6 KiB during the FAILING fetch path specifically -- under
- * 8% headroom, below this project's own 25% floor (ARCHITECTURE.md §4's
- * own CI-soak-test bar) -- not the happy path the original 6 KiB was
- * planned against: a failed fetch retries a full TLS handshake a second
- * time, nested deeper than one clean fetch+decode ever needs. Likely the
- * real root cause of a garbled MBEDTLS_ERR_SSL_BAD_INPUT_DATA seen on the
- * same failing path -- a near-overflow corrupting adjacent memory
- * (possibly mbedTLS's own SSL context) is a simpler, better-evidenced
- * explanation than a genuine TLS protocol violation from the CDN. Raised
- * with real margin, not just enough to clear the floor -- this task's
- * stack is PSRAM-backed (same file, task creation below), so the KiB cost
- * of being generous here is negligible against ~3 MiB PSRAM free. */
+/* ARCHITECTURE.md §4 originally planned 6 KiB ("artwork", core 0, prio 3).
+ * Real hardware (Tier 7) measured stack_hwm=484 bytes remaining out of that
+ * 6 KiB on the FAILING fetch path (a failed fetch retries a full TLS
+ * handshake, nested deeper than a clean fetch+decode) -- under this
+ * project's 25% floor, and likely the real cause of a garbled MBEDTLS_ERR_
+ * SSL_BAD_INPUT_DATA seen on the same path (a near-overflow corrupting
+ * adjacent mbedTLS state, simpler than a real protocol violation). Raised
+ * with real margin -- PSRAM-backed, negligible against ~3 MiB free. */
 #define ARTWORK_TASK_STACK 16384
 #define ARTWORK_TASK_PRIO  3
 #define ARTWORK_TASK_CORE  0
@@ -41,6 +34,12 @@ static void publish_failed(svc_artwork_t *a)
     core_eventbus_publish(a->bus, &evt);
 }
 
+static void mark_track_done(svc_artwork_t *a, const char *track_id)
+{
+    strncpy(a->last_track_id, track_id, sizeof(a->last_track_id) - 1);
+    a->last_track_id[sizeof(a->last_track_id) - 1] = '\0';
+}
+
 static void handle_track_change(svc_artwork_t *a)
 {
     playback_state_t pb;
@@ -49,13 +48,10 @@ static void handle_track_change(svc_artwork_t *a)
     }
 
     if (pb.track_id[0] == '\0') {
-        /* Nothing playing anywhere. Tier -1: svc_spotify now actually
-         * publishes this transition (spotify_service_task.c's
-         * NO_ACTIVE_DEVICE fix) -- previously a held handle from the last
-         * played track would stick on screen forever after playback
-         * stopped entirely, since this function never even learned
-         * playback had stopped, let alone released anything. Release+clear
-         * once on the transition, not on every idle poll. */
+        /* Nothing playing anywhere. Tier -1: svc_spotify now publishes this
+         * transition (NO_ACTIVE_DEVICE fix) -- previously a held handle
+         * stuck on screen forever after playback stopped, since this
+         * function never learned. Release+clear once, not every poll. */
         if (a->current_handle.generation != 0) {
             artwork_cache_release(&a->cache, a->current_handle);
             a->current_handle = (artwork_handle_t){ 0 };
@@ -67,15 +63,11 @@ static void handle_track_change(svc_artwork_t *a)
         return;
     }
     if (pb.artwork_url_640[0] == '\0') {
-        /* Playing, but this specific track has no artwork URL. A bare
-         * return here (found by review) left current_handle/last_track_id
-         * pointing at whatever the PREVIOUS track's artwork was --
-         * DOMAIN_ARTWORK never updated, so the UI kept the old cover on
-         * screen under the new (trackless) track's own metadata. Same
-         * release+clear+publish-once-per-transition treatment as the
-         * "nothing playing" branch above, keyed off last_track_id so
-         * repeat idle polls for the same trackless track don't republish
-         * every tick. */
+        /* Playing, but this track has no artwork URL. A bare return here
+         * (found by review) left the PREVIOUS track's cover on screen under
+         * this track's own metadata. Same release+clear+publish-once
+         * treatment as "nothing playing" above, keyed off last_track_id so
+         * repeat idle polls don't republish every tick. */
         if (strcmp(pb.track_id, a->last_track_id) != 0) {
             if (a->current_handle.generation != 0) {
                 artwork_cache_release(&a->cache, a->current_handle);
@@ -87,26 +79,50 @@ static void handle_track_change(svc_artwork_t *a)
         return;
     }
     if (strcmp(pb.track_id, a->last_track_id) == 0) {
-        return;   /* already fetched -- only re-fetch on a real track-id change */
+        return;   /* already succeeded, or already gave up after
+                      ARTWORK_FETCH_MAX_ATTEMPTS -- only re-attempt on a
+                      real track-id change */
     }
 
     char fetching_track_id[PLAYBACK_TRACK_ID_MAX];
     strncpy(fetching_track_id, pb.track_id, sizeof(fetching_track_id) - 1);
+    fetching_track_id[sizeof(fetching_track_id) - 1] = '\0';
+
+    /* Real bug, found live: marking a track "done" only on success left
+     * last_track_id unchanged on failure, so a cover that repeatedly failed
+     * to decode (confirmed: JDR_INP on the same real cover across many
+     * independent fetches) got re-fetched every poll for as long as it
+     * kept playing, hammering i.scdn.co with an identical, doomed request.
+     * attempt_track_id/attempt_count (tracked separately from
+     * last_track_id, so an in-progress retry isn't mistaken for "done"
+     * above) give a real, bounded chance to recover from transient network
+     * flakiness on this long-lived streamed read, without retrying a
+     * permanently-bad cover forever. */
+    if (strcmp(fetching_track_id, a->attempt_track_id) != 0) {
+        strncpy(a->attempt_track_id, fetching_track_id, sizeof(a->attempt_track_id) - 1);
+        a->attempt_track_id[sizeof(a->attempt_track_id) - 1] = '\0';
+        a->attempt_count = 0;
+    }
+    a->attempt_count++;
+    bool last_attempt = (a->attempt_count >= ARTWORK_FETCH_MAX_ATTEMPTS);
 
     net_http_request_opts_t opts = { .method = NET_HTTP_METHOD_GET, .retryable_after_send = true };
     net_http_response_t resp = { 0 };
     bool ok = net_http_request(a->http, pb.artwork_url_640, &opts, &a->http_policy,
                                   (char *)a->jpeg_staging, ARTWORK_JPEG_STAGING_BYTES, &resp);
     if (!ok || resp.status_code < 200 || resp.status_code >= 300) {
-        ESP_LOGW(TAG, "artwork fetch failed: status=%d", resp.status_code);
+        ESP_LOGW(TAG, "artwork fetch failed: status=%d attempt=%u/%u", resp.status_code,
+                   (unsigned)a->attempt_count, (unsigned)ARTWORK_FETCH_MAX_ATTEMPTS);
+        if (last_attempt) {
+            mark_track_done(a, fetching_track_id);
+        }
         publish_failed(a);
         return;
     }
 
-    /* Stale-in-flight-fetch discard: the track may have changed again
-     * during the (slow) fetch+decode below. Re-check before publishing;
-     * discard silently if so -- the newer track's own fetch is already
-     * queued to run on a later tick. */
+    /* Stale-in-flight-fetch discard: re-check before publishing, discard
+     * silently if the track changed again during the fetch/decode above --
+     * the newer track's own fetch is already queued for a later tick. */
     playback_state_t pb_now;
     if (core_state_read(a->state_store, DOMAIN_PLAYBACK, &pb_now, sizeof(pb_now)) &&
         strcmp(pb_now.track_id, fetching_track_id) != 0) {
@@ -116,13 +132,24 @@ static void handle_track_change(svc_artwork_t *a)
     artwork_handle_t new_handle;
     if (!artwork_cache_acquire(&a->cache, &new_handle)) {
         ESP_LOGW(TAG, "artwork pool exhausted");
+        if (last_attempt) {
+            mark_track_done(a, fetching_track_id);
+        }
         publish_failed(a);
         return;
     }
     uint16_t *pixels = artwork_cache_lock(&a->cache, new_handle);
     if (pixels == NULL || !artwork_decode_jpeg_to_rgb565(a->jpeg_staging, resp.len, pixels)) {
-        ESP_LOGW(TAG, "artwork decode failed");
+        /* resp.len logged against the cap: == means genuinely truncated
+         * (raise the cap); < means the connection closed early (a network
+         * issue the retry above covers, not the buffer size). */
+        ESP_LOGW(TAG, "artwork decode failed: resp.len=%u staging_cap=%u attempt=%u/%u",
+                   (unsigned)resp.len, (unsigned)ARTWORK_JPEG_STAGING_BYTES,
+                   (unsigned)a->attempt_count, (unsigned)ARTWORK_FETCH_MAX_ATTEMPTS);
         artwork_cache_release(&a->cache, new_handle);
+        if (last_attempt) {
+            mark_track_done(a, fetching_track_id);
+        }
         publish_failed(a);
         return;
     }
@@ -149,7 +176,7 @@ static void handle_track_change(svc_artwork_t *a)
         artwork_cache_release(&a->cache, a->current_handle);
     }
     a->current_handle = new_handle;
-    strncpy(a->last_track_id, fetching_track_id, sizeof(a->last_track_id) - 1);
+    mark_track_done(a, fetching_track_id);
 }
 
 /* Real implementations -- task-owned (Phase 5 Tier -1, this file's top
@@ -172,10 +199,9 @@ static bool artwork_service_resume_now(svc_artwork_t *a)
 
 static bool artwork_service_suspend_now(svc_artwork_t *a)
 {
-    /* Critical ordering (artwork_cache.h's own contract): clear the handle
-     * and publish FAILED BEFORE freeing the backing buffer -- otherwise a
-     * handle still sitting in core_state (generation still matching) could
-     * lock() against already-freed memory. */
+    /* Critical ordering (artwork_cache.h's contract): publish FAILED BEFORE
+     * freeing the backing buffer -- otherwise a stale handle in core_state
+     * could lock() against already-freed memory. */
     publish_failed(a);
 
     artwork_cache_free(&a->cache);
@@ -185,6 +211,9 @@ static bool artwork_service_suspend_now(svc_artwork_t *a)
     }
     a->current_handle  = (artwork_handle_t){ 0 };
     a->last_track_id[0] = '\0';
+    a->attempt_track_id[0] = '\0';   /* fresh attempt budget after resume, not whatever
+                                         was left over from before the suspend */
+    a->attempt_count       = 0;
     return true;
 }
 
@@ -288,13 +317,10 @@ bool svc_artwork_create(svc_artwork_t *a, const svc_artwork_cfg_t *cfg)
     }
 
     a->task_should_stop = false;
-    /* PSRAM-backed stack -- MEMORY.md §4's real-hardware finding: real
-     * internal-SRAM margin is only ~138 KiB (idf.py size's DIRAM total),
-     * and this is the task whose own real Spotify-CDN artwork fetch was
-     * caught failing an ~16.7 KiB mbedTLS buffer alloc against it. Same
-     * xTaskCreatePinnedToCoreWithCaps() pattern already proven safe for
-     * ui_app's stack (ESP32-S3 has no WiFi/BT/ROM-call restriction on this
-     * -- that caveat in FreeRTOS's own Kconfig help is ESP32-classic-only). */
+    /* PSRAM-backed stack -- MEMORY.md §4: internal-SRAM margin is only
+     * ~138 KiB, and this task's own fetch was caught failing a ~16.7 KiB
+     * mbedTLS alloc against it. Same pattern already proven safe for
+     * ui_app's stack (no WiFi/BT/ROM-call restriction on ESP32-S3). */
     BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(artwork_service_task, "artwork", ARTWORK_TASK_STACK, a,
                                                        ARTWORK_TASK_PRIO, &a->task_handle, ARTWORK_TASK_CORE,
                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -328,18 +354,14 @@ void svc_artwork_teardown(void *handle)
     }
     core_eventbus_unsubscribe(a->bus, a->playback_sub);
 
-    /* Same critical ordering as artwork_service_suspend_now()'s own
-     * comment: publish FAILED (clearing DOMAIN_ARTWORK's handle) BEFORE
-     * freeing the cache -- found missing here by review. Without this,
-     * a stale handle sits in core_state referencing a cache that's about
-     * to be freed and re-allocated with generation counters reset to 0
-     * (artwork_cache.c's artwork_cache_alloc()); a UI-side read after
-     * restart could then pass the generation check against a slot that
-     * now holds a completely different track's pixels, since the
-     * generation numbers collide across the restart instead of the stale
-     * handle being cleanly rejected. svc_artwork_restart() (below) calls
-     * this before svc_artwork_create(), so this is the only place that
-     * ordering can be enforced for the restart path. */
+    /* Same critical ordering as artwork_service_suspend_now(): publish
+     * FAILED (clearing DOMAIN_ARTWORK's handle) BEFORE freeing the cache --
+     * found missing here by review. Without this, a stale handle sits in
+     * core_state referencing a cache about to be freed and re-allocated
+     * with generation counters reset to 0, so a UI-side read after restart
+     * could pass the generation check against a slot now holding a
+     * different track's pixels. svc_artwork_restart() calls this before
+     * svc_artwork_create(), so this is the only enforcement point. */
     publish_failed(a);
     artwork_cache_teardown(&a->cache);
     if (a->jpeg_staging != NULL) {

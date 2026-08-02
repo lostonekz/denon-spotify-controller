@@ -312,8 +312,10 @@ table is an approval gate, not a formality.
 - **LVGL 9.x, pinned to an exact patch version.** The v8→v9 migration was breaking; we
   choose when to take that cost, not `idf.py update-dependencies`.
 - **We own the LVGL/task glue** — `esp_lvgl_port` is not used. The tick source, flush
-  callback, and UI task loop are ours: ~200 lines sitting on the critical path of the top
-  project risk (R1). See [adr/0008](adr/0008-own-the-lvgl-glue.md).
+  callback, and UI task loop are ours (`components/ui/ui_app/ui_app.c`, 356 lines today —
+  most of the growth past this doc's original ~200-line estimate is real-hardware-finding
+  comments, not added logic), sitting on the critical path of the top project risk (R1). See
+  [adr/0008](adr/0008-own-the-lvgl-glue.md).
 - **No C++.** Its one plausible win is UI composition, which LVGL's C API and our
   widget-factory pattern already cover — without exceptions, RTTI, or a second ABI.
 

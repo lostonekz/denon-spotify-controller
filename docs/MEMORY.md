@@ -15,19 +15,47 @@ Target: ESP32-S3 N16R8 — 8 MB octal PSRAM, ~512 KB internal SRAM, 16 MB flash.
 |---|---|---|
 | LCD framebuffer, 1 × 480×480×2 | 450 KiB | owned by `esp_lcd_rgb_panel` — 1 buffer, not 2; see §3 |
 | LVGL heap (PSRAM pool) | 2048 KiB | added via `lv_mem_add_pool()`; see §3 for why 512 KiB wasn't enough |
-| Artwork slots, 3 × 320×320×2 | 600 KiB | current / incoming / outgoing (crossfade) |
-| Artwork thumbs, 3 × 60×60×2 | 21 KiB | blurred backdrop + palette source |
-| JPEG staging buffer | 96 KiB | one decode at a time |
+| Artwork slots, 3 × 320×320×2 | 600 KiB | current + in-flight handoff + margin (see below) |
+| JPEG staging buffer | 512 KiB | one decode at a time; see below |
 | Log ring, diagnostics | 16 KiB | |
-| **Total** | **~3.16 MiB** | **~4.85 MiB headroom** |
+| **Total** | **~3.54 MiB** | **~4.46 MiB headroom** |
 
 That headroom is deliberate. It is what makes years of feature additions possible without
 re-architecting the memory plan.
 
-**Why 3 artwork slots and not 2:** a crossfade needs the outgoing and incoming images
-simultaneously, and prefetching the next track's art needs a third. Two slots forces a
-choice between smooth transitions and prefetch; the third slot costs 200 KiB of a resource
-we have in surplus.
+**Real bug, found live (Phase 5, real hardware): the "artwork thumbs, 3 × 60×60×2, 21 KiB"
+row this table used to list here never existed in code.** It described a blurred-backdrop/
+palette-source thumbnail pool that was never actually implemented — `artwork_cache.c` only
+ever allocates the one 3×320×320×2 pool above, and `artwork_palette_dominant_color_rgb565()`
+(`artwork_service.c`) computes its palette directly against that same full-size decoded
+slot, not a separate thumbnail. There is no blurred backdrop anywhere either — `w_art_card.c`'s
+own top comment is explicit that the scrim IS the backdrop's darkening, a flat solid-opacity
+rect, not a blurred image. Removed from the table above rather than left as aspirational.
+
+**JPEG staging buffer raised twice on real hardware, 96 KiB → 256 KiB → 512 KiB.** The first
+raise (96→256 KiB) fixed a real truncation of a fetched image (confirmed by the exact
+failure signature — `esp_jpeg_decode` returning `JDR_INP`, tjpgd's own "wrong termination of
+input stream" code, not a corrupt-data or format error — `net_http_request()`'s own contract
+is silent truncation at the buffer cap, not an error). The second raise (256→512 KiB) fixed
+the SAME signature recurring on a specific real cover (Capital Cities, "Safe and Sound"),
+confirmed reproducible across many independent fetches of the identical URL — deterministic
+per-cover, not transient network flakiness. A related real bug, found and fixed in the same
+pass: `svc_artwork` used to mark a track "done" (stop retrying) only on a successful decode,
+so a track whose cover repeatedly failed decode got re-fetched and re-decoded on *every* poll
+for as long as it kept playing, hammering the CDN with an identical, doomed request forever.
+Fixed with a bounded retry (`ARTWORK_FETCH_MAX_ATTEMPTS`, 3): a real, capped number of
+attempts per track before giving up until the next real track change — enough to recover
+from a genuine transient network hiccup on this long-lived streamed read, without retrying a
+permanently-bad cover forever.
+
+**Why 3 artwork slots and not 1:** `svc_artwork` publishes the new handle before releasing
+the previous one (`artwork_cache.h`'s own ownership contract — never a window where
+`core_state`/an in-flight event points at an already-released slot), so at least 2 must be
+valid simultaneously during that handoff. The 3rd slot is real margin, not a currently-used
+prefetch path — a future track-ahead prefetch could use it, but nothing fetches ahead of the
+current track today (`artwork_cache.h`'s own `ARTWORK_CACHE_SLOT_COUNT` comment: "Phase 4
+only ever holds 1 'live'"). 200 KiB of headroom for that, out of a resource we have in
+surplus, isn't worth trimming back to 2 over.
 
 **Why 320×320:** Spotify serves 640, 300, and 64 px variants. We fetch the 640 and decode at
 **½ scale** — the JPEG decoder does this almost for free by dropping high-frequency
@@ -202,6 +230,18 @@ headroom it frees up. Full account in [RISKS.md](RISKS.md) R1's own Phase 5 Tier
 its performance-sweep follow-up, including why none of this overturns the original
 6.7–7.1%/WiFi-baseline finding above.
 
+**A later real-hardware pass (2026-08-02) tried reversing this same decision again —
+`num_fbs=2` + `LV_DISPLAY_RENDER_MODE_FULL`, real double-buffering — and confirmed it WORSE:
+static black partial frames, up to the bottom ~70% of the screen, from the LCD driver
+swapping which framebuffer is "current" synchronously in `flush_cb`, with no wait for the
+bounce-buffer refill ISR to finish scanning out the current one first. Reverted back to the
+settings above.** A leftover diagnostic flag (`CONFIG_HEAP_POISONING_COMPREHENSIVE`, left
+enabled from an unrelated investigation) was also found contending with the same bounce-buffer
+refill ISR for CPU/bus time — real cause of an unrelated "white lines on the left edge"
+report, now fixed by disabling it. Full account, including a third still-not-fully-explained
+symptom (a "vertical anchor jitter" on frequently-redrawn widgets), in
+[RISKS.md](RISKS.md) R1's own 2026-08-02 update.
+
 **Why the LVGL pool grew from 512 KiB to 2 MiB (PSRAM) + 24 KiB (static internal), a real
 finding, not a redesign:** the original 512 KiB figure was never actually wired up as a real
 pool — `ui_app.c` only ever called `lv_init()` and nothing else, so LVGL ran on whatever tiny
@@ -305,8 +345,8 @@ and high-water mark to `svc_diagnostics`.
 |---|---|---|
 | Event queues (per subscriber) | see [EVENTS_AND_STATE.md](EVENTS_AND_STATE.md) §5.3 | `core_eventbus` |
 | Intent queue | 16 × 64 B | `core_eventbus` |
-| Artwork slots | 3 × 200 KiB + 3 × 7 KiB | `svc_artwork` |
-| JPEG staging | 1 × 96 KiB | `svc_artwork` |
+| Artwork slots | 3 × 200 KiB | `svc_artwork` |
+| JPEG staging | 1 × 512 KiB | `svc_artwork` |
 | HTTP response buffers | 2 × 16 KiB | `net_http` |
 | **JSON parse scratch** | cJSON, general heap per parse call (see note below) | `svc_spotify` |
 | String scratch (formatting) | 8 × 128 B | `ui` |

@@ -24,6 +24,27 @@
                                                gradient's bottom stop) -- no gradient anywhere on
                                                this widget, by design, not an oversight. */
 
+#define W_ART_CARD_SCRIM_HEIGHT_PCT 46     /* Real bug, found live (Tier 7 UI polish pass):
+                                               the flat-opacity fix above killed the gradient's
+                                               visible banding but left the scrim rect itself at
+                                               the gradient's own full LV_PCT(100) size -- so
+                                               view_model_scrim.h's 0.92 BASELINE_OPA (the value
+                                               meant for a gradient's BOTTOM stop only) covered
+                                               the entire card at near-full opacity for any cover
+                                               at or below the luma midpoint (VIEW_MODEL_SCRIM_
+                                               LUMA_MIDPOINT's own comment: "most covers are
+                                               darker than this"), i.e. almost every real track --
+                                               the artwork was barely visible behind it. Fix:
+                                               shrink the scrim to just the bottom band where the
+                                               overlay text/controls actually sit (the bottom
+                                               stack's own real content -- hero title, artist,
+                                               progress bar, transport row -- measures well under
+                                               half the 480px card), bottom-aligned, leaving the
+                                               artwork's upper majority unobstructed. Restores the
+                                               original mock's intent (mostly-visible art, heavy
+                                               darkening only right behind the text) without
+                                               reintroducing a gradient. */
+
 static uint16_t *alloc_pixel_buf(void)
 {
 #ifdef ESP_PLATFORM
@@ -133,18 +154,30 @@ lv_obj_t *w_art_card_create(lv_obj_t *parent, w_art_card_t *w, const w_art_card_
     lv_obj_set_style_border_width(w->scrim, 0, 0);
     lv_obj_set_style_bg_color(w->scrim, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(w->scrim, W_ART_CARD_SCRIM_BASELINE_OPA, 0);
-    lv_obj_set_size(w->scrim, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_size(w->scrim, LV_PCT(100), LV_PCT(W_ART_CARD_SCRIM_HEIGHT_PCT));
+    lv_obj_align(w->scrim, LV_ALIGN_BOTTOM_MID, 0, 0);
 
     return w->root;
 }
 
-void w_art_card_set_artwork(w_art_card_t *w, artwork_handle_t handle, const char *track_id)
+void w_art_card_set_artwork(w_art_card_t *w, artwork_handle_t handle,
+                              const char *playback_track_id, const char *artwork_track_id)
 {
-    if (strncmp(w->current_track_id, track_id, sizeof(w->current_track_id)) != 0) {
-        strncpy(w->current_track_id, track_id, sizeof(w->current_track_id) - 1);
+    if (strncmp(w->current_track_id, playback_track_id, sizeof(w->current_track_id)) != 0) {
+        strncpy(w->current_track_id, playback_track_id, sizeof(w->current_track_id) - 1);
         w->current_track_id[sizeof(w->current_track_id) - 1] = '\0';
         w->current_handle = (artwork_handle_t){ 0, 0 };
         lv_obj_set_style_opa(w->image, LV_OPA_TRANSP, 0);   /* back to placeholder immediately */
+    }
+
+    /* artwork_track_id lags behind playback_track_id until a real decode
+     * completes for the CURRENTLY playing track -- see this function's own
+     * header comment. A mismatch here just means "no artwork for the
+     * current track yet (or ever, on a permanent decode failure)," so stay
+     * on the placeholder rather than render a handle that's actually still
+     * the previous track's. */
+    if (strncmp(playback_track_id, artwork_track_id, sizeof(w->current_track_id)) != 0) {
+        return;
     }
 
     bool handle_is_empty = (handle.slot == 0u && handle.generation == 0u);

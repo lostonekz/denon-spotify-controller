@@ -71,5 +71,10 @@ now_playing_vm_t view_model_now_playing_build(const playback_state_t *pb,
     view_model_format_half_db(denon->volume_half_db, vm.volume_display, sizeof(vm.volume_display));
     vm.volume_tone = view_model_tone_from_link_status(denon->meta.status);
 
+    view_model_text_copy_safe(vm.device_name, sizeof(vm.device_name), pb->device_name);
+    if (!view_model_text_has_content(vm.device_name)) {
+        view_model_text_copy_safe(vm.device_name, sizeof(vm.device_name), "No Device");
+    }
+
     return vm;
 }

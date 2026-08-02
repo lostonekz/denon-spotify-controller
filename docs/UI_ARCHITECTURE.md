@@ -9,7 +9,10 @@ Companion to [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```
 ui_app          owns lv_display, the root object, the event subscription,
-                and the UI task loop. ~150 lines. Knows no screen internals.
+                and the UI task loop. Knows no screen internals. (356 lines
+                today, not the ~150 originally estimated here — most of the
+                growth is real-hardware-finding comments, e.g. the LVGL PSRAM
+                pool/draw-buffer sizing history, not added logic.)
     │
 ui_router       screen stack, transitions, back/gesture handling, lifecycle
     │
@@ -126,7 +129,7 @@ Art-forward — the full-bleed art card *is* the backdrop, so it folds into `w_a
 
 | Widget | Purpose |
 |---|---|
-| `w_art_card` | Full-bleed album art + integrated scrim, crossfade between two artwork slots, placeholder state. **Square corners, not rounded** — a real finding, not the original design: with rounded corners (`clip_corner`) enabled, LVGL's own compositing-layer allocator (`lv_draw_layer_alloc_buf`) never returns on this real hardware/LVGL-version combination, confirmed stuck inside `lv_tlsf.c`'s own block search, not failing or asserting, at every pool size tried. Root cause not found; `clip_corner` is off as the working fix. Filed as a real follow-up: either root-cause the layer-alloc hang, or move corner-rounding into the artwork pixel buffer itself before handing it to LVGL. The scrim itself is a flat, solid, per-track-adaptive opacity, not the vertical gradient this section originally described (§6) — RGB565's 16-bit color depth made a smooth opacity ramp visibly band on real hardware. |
+| `w_art_card` | Full-bleed album art + integrated scrim, placeholder state. **No animated crossfade** — a real finding, not the original design: `w_art_card_set_artwork()` drops to the neutral placeholder the *instant* the currently-playing track id changes (from `playback_state_t`, which updates immediately), independent of whether the new artwork has finished fetching/decoding yet (that can lag up to ~1.8s, RISKS.md R1); once it does, the new image pops in at full opacity directly, not an animated fade — an earlier animated opacity transition (TRANSP→COVER over 600ms) forced LVGL's software renderer through a real alpha-compositing layer for every frame, measured at 337ms for a single frame on real hardware, well over R10's 100ms stall budget. Filed as a real follow-up: either root-cause LVGL's layer-alloc cost directly, or fade via a cheaper mechanism that doesn't force a layer. **Square corners, not rounded** — a separate real finding: with rounded corners (`clip_corner`) enabled, LVGL's own compositing-layer allocator (`lv_draw_layer_alloc_buf`) never returns on this real hardware/LVGL-version combination, confirmed stuck inside `lv_tlsf.c`'s own block search, not failing or asserting, at every pool size tried. Root cause not found; `clip_corner` is off as the working fix. The scrim itself is a flat, solid, per-track-adaptive opacity, not the vertical gradient this section originally described (§6) — RGB565's 16-bit color depth made a smooth opacity ramp visibly band on real hardware. |
 | `w_marquee_label` | Text that gently scrolls only when it overflows, pauses at each end |
 | `w_progress_bar` | Interpolated progress + elapsed/remaining. **Display-only, no scrub-on-drag** — `spotify_intent.h` has no SEEK intent kind and `NETWORKING.md` §1.3's endpoint list has no seek endpoint; there is nothing to wire a drag gesture to yet |
 | `w_transport` | Prev / play-pause / next, with the pending-state treatment. **No heart/favorite** — no Spotify save/favorite endpoint exists anywhere in this project's own endpoint list, so a heart icon would be a permanently-dead tap target |
@@ -246,13 +249,21 @@ THEME_TOUCH_MIN        56 px      /* a wall device is touched imprecisely */
 THEME_MOTION_INSTANT   100 ms  ease-out    /* press feedback        */
 THEME_MOTION_QUICK     200 ms  ease-out    /* toggles, toasts       */
 THEME_MOTION_STANDARD  320 ms  ease-in-out /* screen transitions    */
-THEME_MOTION_SLOW      600 ms  ease-in-out /* artwork crossfade     */
+THEME_MOTION_SLOW      600 ms  ease-in-out /* unused — see below     */
 THEME_MOTION_AMBIENT  1200 ms  linear      /* backdrop drift        */
 ```
 
 All animation goes through `lv_anim`. No manual per-frame timers, no `lv_refr_now()`.
 Motion is what separates this from a dashboard, so it gets tokens and consistency rather
 than per-site tuning.
+
+**`THEME_MOTION_SLOW` is currently unused** — it was defined for the artwork crossfade
+(§4's `w_art_card` entry), but that animation was removed on real hardware: animating the
+art image's opacity forced LVGL's software renderer through a real alpha-compositing layer,
+measured at 337ms for a single frame, well over R10's 100ms stall budget. The artwork switch
+is instant now (placeholder on track change, a direct opacity pop once decode completes), no
+`lv_anim` involved. Left defined rather than removed, in case a cheaper crossfade mechanism
+(not forced through LVGL's layer-compositing path) replaces the current instant pop later.
 
 ---
 
@@ -264,8 +275,10 @@ Phase 5 build work started. This is what actually shipped:
 
 ```
 ┌────────────────────────────────────────────┐
-│ (status pill, if not LIVE)          14:32  │  top overlay: clock only, no room name
-│                                            │  (no field for one exists in core_state)
+│ (status pill, if not LIVE)   Living Room   │  top overlay: active Spotify Connect
+│                                            │  device name (playback_state_t.device_name),
+│                                            │  read-only — not the clock this section
+│                                            │  originally mocked; see prose below
 │    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
 │    ▓▓▓▓▓▓▓  full-bleed album art  ▓▓▓▓▓▓▓  │  square corners, not rounded (§4)
 │    ▓▓▓▓▓▓▓  + flat adaptive scrim ▓▓▓▓▓▓▓  │  solid opacity, not a gradient (§4)
@@ -281,12 +294,19 @@ Phase 5 build work started. This is what actually shipped:
 └────────────────────────────────────────────┘
 ```
 
-- Artwork crossfades over 600 ms once a `DOMAIN_ARTWORK` update matching the current
-  track ID arrives; text/metadata update immediately on the track-changed event, ahead of
-  artwork, rather than waiting — honest about JPEG decode taking real time (RISKS.md R1),
-  not pretending it's instant.
+- Artwork drops to a neutral placeholder the *instant* the currently-playing track id
+  changes (from `playback_state_t`, which updates immediately) — text/metadata update on the
+  same event, so nothing lags. The new artwork pops in (no animation, §4) once its own
+  `DOMAIN_ARTWORK` update, matching that same track id, actually arrives — that can take up
+  to ~1.8s (RISKS.md R1), which is why these are driven by two separate track ids, not one:
+  a real bug, found live, had the placeholder wait for the artwork-side id too, so the old
+  cover visibly lingered under the new track's title/artist for that whole window.
 - The progress bar animates continuously from local interpolation, corrected smoothly on
   each poll — never a visible jump.
+- The device-name label (top-right) is `playback_state_t.device_name`, live, read-only. A
+  tap-to-switch device picker (choose which Spotify Connect device is playing) was built and
+  confirmed working on real hardware, then explicitly reverted at the user's request — the
+  label is not wired to anything.
 - The volume badge is `denon_state_t`'s own volume (Denon is the primary volume control,
   ADR-0007) — live, read-only. Tapping it does nothing in Phase 5; `w_volume_sheet` (a modal)
   is Phase 6.

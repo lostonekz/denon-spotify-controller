@@ -49,10 +49,29 @@ typedef struct {
 lv_obj_t *w_art_card_create(lv_obj_t *parent, w_art_card_t *w, const w_art_card_cfg_t *cfg);
 
 /* Safe to call every screen update() tick, not just on a real change --
- * no-ops internally unless track_id or handle actually differ from what's
- * already applied. handle == {0,0} means "no artwork for this track" and
- * resets to the placeholder (Tier -1's clear-on-empty fix, rendered here). */
-void w_art_card_set_artwork(w_art_card_t *w, artwork_handle_t handle, const char *track_id);
+ * no-ops internally unless either track_id or handle actually differ from
+ * what's already applied. handle == {0,0} means "no artwork for this
+ * track" and resets to the placeholder (Tier -1's clear-on-empty fix,
+ * rendered here).
+ *
+ * Two distinct track ids, not one -- real bug, found live: playback_track_id
+ * (playback_state_t's own, changes the instant Spotify reports a new track)
+ * and artwork_track_id (artwork_state_t's own, only updates once that new
+ * track's artwork actually finishes fetching+decoding, up to ~1.8s per
+ * RISKS.md R1) are NOT the same value for that whole window. The previous
+ * single-track_id signature compared against artwork_track_id alone, so the
+ * OLD cover stayed on screen for the entire fetch+decode duration after a
+ * track change (or the entire failed-decode duration on a bad/oversized
+ * JPEG) even though title/artist already updated instantly -- confusing,
+ * and not what plan §3 actually intended ("w_art_card enters a neutral
+ * placeholder immediately on track-id change"). Comparing against
+ * playback_track_id instead drops to the placeholder the instant playback
+ * moves on, regardless of whether/when the new artwork ever arrives;
+ * artwork_track_id is still needed separately, to gate against rendering a
+ * handle that isn't actually for the CURRENTLY playing track (it stays
+ * lagging/mismatched until a real decode completes for THIS track). */
+void w_art_card_set_artwork(w_art_card_t *w, artwork_handle_t handle,
+                              const char *playback_track_id, const char *artwork_track_id);
 
 #ifdef __cplusplus
 }

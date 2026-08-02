@@ -30,6 +30,7 @@ static playback_state_t make_playing_track(void)
     strncpy(pb.artist, "The National", sizeof(pb.artist) - 1);
     strncpy(pb.album, "Boxer", sizeof(pb.album) - 1);
     strncpy(pb.track_id, "3JOVTQ5h8HGFnDdp4VT3MP", sizeof(pb.track_id) - 1);
+    strncpy(pb.device_name, "Living Room", sizeof(pb.device_name) - 1);
     pb.position_ms = 63500;
     pb.duration_ms = 127000;
     pb.is_playing  = true;
@@ -77,6 +78,7 @@ static void test_normal_playing_track(void)
     TEST_ASSERT_EQUAL_HEX16(0x1234, vm.accent_rgb565);
     TEST_ASSERT_EQUAL_STRING("52.5", vm.volume_display);
     TEST_ASSERT_EQUAL(TONE_LIVE, vm.volume_tone);
+    TEST_ASSERT_EQUAL_STRING("Living Room", vm.device_name);
 }
 
 static void test_pending_flag_passes_through(void)
@@ -148,6 +150,17 @@ static void test_stale_playback_link_status_reflected_in_tone(void)
     TEST_ASSERT_EQUAL(TONE_STALE, vm.tone);
 }
 
+static void test_empty_device_name_falls_back_to_no_device(void)
+{
+    playback_state_t pb = make_playing_track();
+    pb.device_name[0] = '\0';
+    artwork_state_t art = make_matching_artwork(&pb);
+    denon_state_t denon = make_denon();
+
+    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
+    TEST_ASSERT_EQUAL_STRING("No Device", vm.device_name);
+}
+
 static void test_denon_tone_is_independent_of_playback_tone(void)
 {
     playback_state_t pb = make_playing_track();
@@ -169,6 +182,7 @@ int main(void)
     RUN_TEST(test_artwork_for_a_different_track_falls_back_to_default_accent);
     RUN_TEST(test_empty_title_falls_back_to_album);
     RUN_TEST(test_empty_title_and_album_falls_back_to_unknown_track);
+    RUN_TEST(test_empty_device_name_falls_back_to_no_device);
     RUN_TEST(test_stale_playback_link_status_reflected_in_tone);
     RUN_TEST(test_denon_tone_is_independent_of_playback_tone);
     return UNITY_END();

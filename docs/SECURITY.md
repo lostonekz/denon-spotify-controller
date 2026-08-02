@@ -49,7 +49,7 @@ Stated explicitly, because an unstated threat model is how scope creeps in both 
 | T2 | Downgrade to a known-broken firmware | monotonic `security_version`, anti-rollback | **yes** |
 | T3 | Corrupt or truncated download bricks a wall-mounted unit | SHA-256 + header validation + health gate | yes |
 | T4 | Credentials leaked through logs, diagnostics export, or a support paste | redaction by key prefix, secrets never rendered | yes |
-| T5 | Token or credential interception during setup on a shared LAN | PKCE + `state`, short-lived listener, pairing PIN | yes |
+| T5 | Token or credential interception during setup on a shared LAN | PKCE + `state`, no on-device listener to intercept ([adr/0009](adr/0009-manual-code-paste-over-bounce-page.md)) | yes |
 | T6 | Physical access to a resold, returned, or discarded unit | flash encryption + zeroising factory reset | production only |
 | T7 | Attacker on the local network reads or replays control traffic | — accepted, see below | — |
 

@@ -1,8 +1,5 @@
 #include "screen_now_playing.h"
 
-#include <stdio.h>
-#include <time.h>
-
 #include "theme_colors.h"
 #include "theme_fonts.h"
 #include "theme_metrics.h"
@@ -22,6 +19,36 @@ static lv_color_t rgb565_to_lv_color(uint16_t rgb565)
     return lv_color_make((uint8_t)(r5 * 255u / 31u), (uint8_t)(g6 * 255u / 63u), (uint8_t)(b5 * 255u / 31u));
 }
 
+/* Real bug, found live (real-hardware report): a fixed pixel height, not
+ * LV_SIZE_CONTENT -- LV_SIZE_CONTENT means this stack's own height is
+ * recomputed from its children's sizes on every relayout, and
+ * now_playing_update() rewrites the progress bar's value and elapsed/
+ * remaining time labels every single UI-task tick (interpolated smoothly
+ * while playing), not just when their displayed text visibly changes.
+ * Combined with lv_obj_align(..., LV_ALIGN_BOTTOM_MID, ...) below -- which
+ * positions this box relative to its OWN height -- any per-tick recompute
+ * of that height (even a sub-pixel one) shifts the whole box, and
+ * everything in it, vertically. This matched the reported symptom exactly:
+ * the art card (touched only on a real track change, per w_art_card.c's own
+ * no-op-unless-changed contract) stayed rock stable, while this stack's
+ * children (updated every tick) visibly jumped to a different vertical
+ * anchor each frame. A fixed height removes the recompute dependency
+ * entirely; LV_FLEX_ALIGN_END on the main axis (below, unchanged) still
+ * packs real content against the BOTTOM of this box exactly as before, so
+ * normal appearance is unaffected as long as the fixed height comfortably
+ * exceeds real content height (it does, with real margin -- see the
+ * constant's own sizing below). */
+#define NOW_PLAYING_BOTTOM_STACK_HEIGHT 240   /* hero title (~34px) + gap + artist
+                                                  (~30px) + gap + progress block
+                                                  (bar + time row, ~24px) + gap +
+                                                  transport row (THEME_TOUCH_MIN,
+                                                  56px) + gaps (3x THEME_SPACE_S)
+                                                  is ~170px of real content;
+                                                  240px leaves real margin for
+                                                  font ascent/descent and any
+                                                  future content growth without
+                                                  ever needing to be exact */
+
 static lv_obj_t *make_bottom_stack(lv_obj_t *parent)
 {
     lv_obj_t *stack = lv_obj_create(parent);
@@ -33,7 +60,7 @@ static lv_obj_t *make_bottom_stack(lv_obj_t *parent)
     lv_obj_set_flex_flow(stack, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(stack, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_width(stack, LV_PCT(88));
-    lv_obj_set_height(stack, LV_SIZE_CONTENT);
+    lv_obj_set_height(stack, NOW_PLAYING_BOTTOM_STACK_HEIGHT);
     lv_obj_align(stack, LV_ALIGN_BOTTOM_MID, 0, -THEME_SPACE_L);
     return stack;
 }
@@ -65,17 +92,19 @@ static lv_obj_t *now_playing_create(screen_ctx_t *ctx)
                            failure, same as any other screen-build failure */
     }
 
-    np->clock_label = lv_label_create(root);
-    lv_obj_set_style_text_font(np->clock_label, &ui_font_meta, 0);
-    lv_obj_set_style_text_color(np->clock_label, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(np->clock_label, LV_ALIGN_TOP_RIGHT, -THEME_SPACE_L, THEME_SPACE_L);
-
-    /* No room name -- UI_ARCHITECTURE.md §6's Art-forward top overlay calls
-     * for "room name, mono/uppercase + live clock," but no field for it
-     * exists anywhere in core_state (Settings, Phase 6, is the only real
-     * candidate owner). Shipping the clock alone rather than fabricating a
-     * fake setting; a documented Tier 6 scope reduction, not a silent
-     * omission -- see the plan file's own Tier 6 findings. */
+    /* Top-right overlay slot: originally a live clock (Tier 6). Replaced
+     * (user request, Tier 7 UI polish pass) with the active Spotify Connect
+     * device name -- closer to the design system's own original intent for
+     * this slot ("room name, mono/uppercase + live clock") than a clock
+     * alone ever was, since "which device is currently playing" is real
+     * data core_state already has (playback_state_t.device_name) where no
+     * room-name field exists anywhere. Read-only display -- a tap-to-switch
+     * device picker was built and confirmed working, then explicitly
+     * descoped by the user; kept as a plain, non-interactive label. */
+    np->device_label = lv_label_create(root);
+    lv_obj_set_style_text_font(np->device_label, &ui_font_meta, 0);
+    lv_obj_set_style_text_color(np->device_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(np->device_label, LV_ALIGN_TOP_RIGHT, -THEME_SPACE_L, THEME_SPACE_L);
 
     if (w_status_pill_create(root, &np->status_pill) == NULL) {
         return NULL;
@@ -88,8 +117,19 @@ static lv_obj_t *now_playing_create(screen_ctx_t *ctx)
     w_marquee_label_create(stack, &np->title_label, &title_cfg);
 
     np->artist_label = lv_label_create(stack);
-    lv_obj_set_style_text_font(np->artist_label, &ui_font_body, 0);
+    /* Same family as the hero title (ui_font_title is Archivo 600, same
+     * family as ui_font_hero's Archivo 700 -- just a smaller size/lighter
+     * weight, per user request). Explicit width + LEFT align, matching
+     * title_cfg's own width=LV_PCT(100): the stack's shared flex cross-axis
+     * align is CENTER (make_bottom_stack()), which only affects children
+     * that DON'T span the full stack width -- giving artist_label the same
+     * full width as the title takes it out of that centering the same way,
+     * without touching the stack's shared alignment (which progress_bar/
+     * transport still rely on being CENTER-safe-for-100%-width). */
+    lv_obj_set_style_text_font(np->artist_label, &ui_font_title, 0);
     lv_obj_set_style_text_color(np->artist_label, THEME_COLOR_TEXT_SECONDARY, 0);
+    lv_obj_set_style_text_align(np->artist_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_width(np->artist_label, LV_PCT(100));
 
     w_progress_bar_cfg_t progress_cfg = { .width = LV_PCT(100) };
     w_progress_bar_create(stack, &np->progress_bar, &progress_cfg);
@@ -125,30 +165,13 @@ static void now_playing_update(screen_ctx_t *ctx, const void *vm)
     w_progress_bar_set_progress(&np->progress_bar, u->vm.progress_permille, u->vm.elapsed, u->vm.remaining, accent);
     w_transport_set_state(&np->transport, u->vm.is_playing, u->vm.pending);
     w_status_pill_set_tone(&np->status_pill, u->vm.tone);
-    w_art_card_set_artwork(&np->art_card, u->artwork_handle, u->artwork_track_id);
+    w_art_card_set_artwork(&np->art_card, u->artwork_handle, u->playback_track_id, u->artwork_track_id);
 
     lv_label_set_text(np->volume_label, u->vm.volume_display);
     lv_obj_set_style_text_color(np->volume_label,
                                   (u->vm.volume_tone == TONE_LIVE) ? THEME_COLOR_TEXT_SECONDARY : THEME_COLOR_TEXT_TERTIARY, 0);
 
-    /* Live wall-clock, HH:MM -- plain libc time(), not a forbidden svc/app
-     * call (net_time.c already keeps the system clock SNTP-synced; this
-     * screen just reads it, same as any other C code on the target is free
-     * to). No net_time dependency, no layering exception needed.
-     *
-     * localtime(), not localtime_r(): the reentrant form isn't declared by
-     * this host toolchain's UCRT headers at all (a real build error hit
-     * here -- UCRT has its own non-POSIX localtime_s() instead, reversed
-     * argument order, ESP-IDF's newlib has neither's ABI in common with
-     * the other). Plain localtime()'s internal static buffer is safe here:
-     * the UI task is single-threaded and the result is copied out via
-     * snprintf() immediately, before anything else could run. */
-    time_t     now    = time(NULL);
-    struct tm *tm_now = localtime(&now);
-    char clock_buf[6];
-    if (tm_now != NULL && snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d", tm_now->tm_hour, tm_now->tm_min) > 0) {
-        lv_label_set_text(np->clock_label, clock_buf);
-    }
+    lv_label_set_text(np->device_label, u->vm.device_name);
 }
 
 screen_if_t screen_now_playing_get_interface(void)

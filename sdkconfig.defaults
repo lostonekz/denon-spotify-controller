@@ -104,3 +104,24 @@ CONFIG_LV_COLOR_DEPTH_16=y
 # problem at first rather than a font-decoding one. The decompression
 # code already exists in LVGL; this only turns it on.
 CONFIG_LV_USE_FONT_COMPRESSED=y
+
+# Real bug, found live: CONFIG_HEAP_POISONING_COMPREHENSIVE was switched on
+# here as a TEMPORARY diagnostic during the device-picker freeze
+# investigation (Phase 5 post-Tier-7 device switcher addition) to chase what
+# looked like corrupted allocator metadata behind three separate LVGL
+# allocation hangs -- it never actually fired (real hardware ran hundreds of
+# frames, including a full separate crash, under COMPREHENSIVE's periodic
+# full-heap integrity scan with no panic), and the real root cause turned
+# out to be unconditionally pre-creating all 10 device-picker rows
+# regardless of real device count, confirmed by a zero-rows bisection test
+# and fixed by dynamic/incremental row creation -- never a corruption bug at
+# all. Left enabled afterward by oversight. COMPREHENSIVE mode's own real
+# CPU cost (a full heap-integrity walk around allocations) was never free,
+# and its enable timeline matches exactly when a user-visible real-hardware
+# artifact appeared (white lines/dots on the display's left edge, worse
+# under real full-app load) -- plausibly contending with the LCD's own
+# DMA bounce-buffer refill ISR for the same internal-RAM bus. Reverted back
+# off; if the display artifact was actually caused by this, disabling it is
+# the fix, not a bigger bounce buffer (tried, made it worse -- see
+# hal_display.c's own comment).
+CONFIG_HEAP_POISONING_DISABLED=y

@@ -109,7 +109,8 @@ static void handle_ctrl_cmd(svc_spotify_t *s, const spotify_ctrl_cmd_t *cmd)
             break;   /* no access token to call with */
         }
         spotify_device_list_t list = { 0 };
-        if (spotify_api_get_devices(s->http, &s->http_policy, s->state.access_token, &list) == SPOTIFY_API_RESULT_OK) {
+        spotify_api_result_t r = spotify_api_get_devices(s->http, &s->http_policy, s->state.access_token, &list);
+        if (r == SPOTIFY_API_RESULT_OK) {
             xSemaphoreTake(s->session_lock, portMAX_DELAY);
             s->state.last_devices = list;
             xSemaphoreGive(s->session_lock);
@@ -133,6 +134,17 @@ static void publish_intent_ack(svc_spotify_t *s, uint32_t seq, intent_ack_evt_ki
     core_eventbus_publish(s->bus, &evt);
 }
 
+/* Force-poll at +250ms/+1s after any intent, per NETWORKING.md §1.3's
+ * table -- converges the UI quickly rather than waiting for the next
+ * routine poll. */
+static void bump_force_poll(svc_spotify_t *s)
+{
+    int64_t now = s->clock.now_us(s->clock.ctx);
+    s->state.force_poll_deadline_us[0] = spotify_poll_force_deadline_us(now, 0);
+    s->state.force_poll_deadline_us[1] = spotify_poll_force_deadline_us(now, 1);
+    s->state.force_poll_index = 0;
+}
+
 static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
 {
     spotify_api_cmd_t cmd;
@@ -146,14 +158,7 @@ static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
         s->state.access_token_refresh_due_us = s->clock.now_us(s->clock.ctx);   /* force a refresh now */
     }
     publish_intent_ack(s, intent->seq, spotify_intent_ack_kind_for_result(r));
-
-    /* Force-poll at +250ms/+1s after any intent, per NETWORKING.md §1.3's
-     * table -- converges the UI quickly rather than waiting for the next
-     * routine poll. */
-    int64_t now = s->clock.now_us(s->clock.ctx);
-    s->state.force_poll_deadline_us[0] = spotify_poll_force_deadline_us(now, 0);
-    s->state.force_poll_deadline_us[1] = spotify_poll_force_deadline_us(now, 1);
-    s->state.force_poll_index = 0;
+    bump_force_poll(s);
 }
 
 static void publish_playback_event(svc_spotify_t *s, const playback_state_t *pb)

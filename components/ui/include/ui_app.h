@@ -94,10 +94,10 @@ typedef struct {
 /* cfg->hal_disp/hal_touch/state/bus must already be initialized. Creates
  * the LVGL display (LV_DISPLAY_RENDER_MODE_PARTIAL against a small LVGL-
  * owned PSRAM draw buffer, a single hal_disp framebuffer underneath --
- * hal_display.h's own top comment has the real-hardware finding behind
- * this, corrected from an earlier draft of this comment that described the
- * withdrawn 2-framebuffer/full-frame design), a touch input device backed
- * by hal_touch's GT911 handle, the 2ms esp_timer LVGL tick, ui_router (Now
+ * hal_display.h's own top comment has the real-hardware finding history
+ * behind this, including a real double-buffered/full-frame diagnostic
+ * that was tried and confirmed worse), a touch input device backed by
+ * hal_touch's GT911 handle, the 2ms esp_timer LVGL tick, ui_router (Now
  * Playing real, Denon/Settings still stub), and the dedicated UI task
  * (core 1, prio 4, 12KB stack, ARCHITECTURE.md §4). */
 bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg);

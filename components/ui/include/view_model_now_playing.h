@@ -53,6 +53,11 @@ typedef struct {
     char      volume_display[VM_VOLUME_DISPLAY_MAX];   /* "52.5" -- Denon's own volume,
                                                          * read-only badge (Phase 5 plan §6) */
     tone_t    volume_tone;         /* Denon's own honesty check, same mapping as `tone` */
+    char      device_name[PLAYBACK_DEVICE_NAME_MAX];   /* the Spotify Connect device
+                                                         * currently playing -- "No Device"
+                                                         * when pb->device_name is empty
+                                                         * (nothing playing, or Spotify
+                                                         * hasn't reported one yet) */
 } now_playing_vm_t;
 
 /* The pure core: no core_state_read() inside, every input arrives as a

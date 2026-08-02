@@ -37,6 +37,22 @@ typedef enum {
     SPOTIFY_REPEAT_CONTEXT,
 } spotify_repeat_mode_t;
 
+#define SPOTIFY_PARSE_MAX_DEVICES     10
+#define SPOTIFY_PARSE_DEVICE_TYPE_MAX 32
+
+typedef struct {
+    char device_id[PLAYBACK_DEVICE_ID_MAX];
+    char device_name[PLAYBACK_DEVICE_NAME_MAX];
+    char device_type[SPOTIFY_PARSE_DEVICE_TYPE_MAX];   /* diagnostic only, never decides anything */
+    bool supports_volume;
+    bool is_restricted;
+} spotify_device_entry_t;
+
+typedef struct {
+    spotify_device_entry_t devices[SPOTIFY_PARSE_MAX_DEVICES];
+    size_t                 count;
+} spotify_device_list_t;
+
 typedef enum {
     SPOTIFY_PARSE_OK = 0,
     /* A real, valid response meaning "nothing is playing anywhere" (204 or
@@ -53,22 +69,6 @@ typedef enum {
  * initialized the struct to -- callers should zero it first. */
 spotify_parse_status_t spotify_parse_player_state(const char *json, size_t json_len,
                                                      playback_state_t *out);
-
-#define SPOTIFY_PARSE_MAX_DEVICES 10
-#define SPOTIFY_PARSE_DEVICE_TYPE_MAX 32
-
-typedef struct {
-    char device_id[PLAYBACK_DEVICE_ID_MAX];
-    char device_name[PLAYBACK_DEVICE_NAME_MAX];
-    char device_type[SPOTIFY_PARSE_DEVICE_TYPE_MAX];   /* diagnostic only, never decides anything */
-    bool supports_volume;
-    bool is_restricted;
-} spotify_device_entry_t;
-
-typedef struct {
-    spotify_device_entry_t devices[SPOTIFY_PARSE_MAX_DEVICES];
-    size_t                 count;
-} spotify_device_list_t;
 
 /* GET /v1/me/player/devices -> a full device listing, for
  * spotify_avr_match.h's disambiguation. */

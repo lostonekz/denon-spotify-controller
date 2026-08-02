@@ -31,7 +31,18 @@ extern "C" {
 typedef struct {
     now_playing_vm_t vm;
     artwork_handle_t    artwork_handle;
-    char                    artwork_track_id[PLAYBACK_TRACK_ID_MAX];
+    char                    artwork_track_id[PLAYBACK_TRACK_ID_MAX];    /* from artwork_state_t --
+                                                                          * lags behind playback_track_id
+                                                                          * below until the new track's
+                                                                          * artwork actually finishes
+                                                                          * decoding (up to ~1.8s, R1) */
+    char                       playback_track_id[PLAYBACK_TRACK_ID_MAX];   /* from playback_state_t --
+                                                                             * changes the instant Spotify
+                                                                             * reports a new track. w_art_card
+                                                                             * uses THIS to drop stale artwork
+                                                                             * immediately on track change,
+                                                                             * not artwork_track_id's own
+                                                                             * lagging value (see w_art_card.c) */
 } screen_now_playing_update_t;
 
 typedef struct {
@@ -48,8 +59,11 @@ typedef struct {
     w_transport_t             transport;
     w_status_pill_t             status_pill;
     w_toast_t                     toast;
-    lv_obj_t                        *clock_label;
-    lv_obj_t                        *volume_label;
+    lv_obj_t                        *device_label;   /* top-right overlay slot -- was a live
+                                                       * clock, now the active Spotify Connect
+                                                       * device name (u->vm.device_name),
+                                                       * read-only display */
+    lv_obj_t                           *volume_label;
 } screen_now_playing_ctx_t;
 
 screen_if_t screen_now_playing_get_interface(void);

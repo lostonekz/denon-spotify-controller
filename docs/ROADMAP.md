@@ -177,12 +177,19 @@ The theme and widget layer, built once, properly.
 - Now Playing screen, fully realised
 - The SDL host harness, so UI iteration is seconds not minutes
 
-**Exit criteria:** Now Playing is genuinely finished — crossfades, dynamic accent,
-interpolated progress, marquee, stale-state treatment.
+**Exit criteria:** Now Playing is genuinely finished — smooth artwork transitions, dynamic
+accent, interpolated progress, marquee, stale-state treatment.
 
-**Met, with real, named exceptions — not silently shipped half-working.** Crossfades,
-per-track accent (from artwork luma), interpolated progress, marquee, and STALE/OFFLINE
-treatment are all real, on real hardware. Explicitly deferred, not forgotten: progress-bar
+**Met, with real, named exceptions — not silently shipped half-working.** Artwork
+transitions (an immediate switch to a neutral placeholder the instant the track changes,
+then an instant pop to the new artwork once it's decoded — not the animated crossfade
+originally planned; a real hardware finding, see below), per-track accent (from artwork
+luma), interpolated progress, marquee, and STALE/OFFLINE treatment are all real, on real
+hardware. The animated crossfade was tried and removed: animating the artwork's opacity
+forced LVGL's software renderer through a real alpha-compositing layer, measured at 337ms
+for a single frame — well over R10's 100ms stall budget — so the instant-pop version above
+shipped instead ([RISKS.md](RISKS.md) R1 / [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §4).
+Explicitly deferred, not forgotten: progress-bar
 scrub (no SEEK intent or endpoint exists anywhere in this project — `spotify_intent.h`
 documents this directly), the volume badge is read-only (`w_volume_sheet`, the tap target for
 it, is Phase 6), and the heart/favorite control was cut outright, not deferred (no
@@ -274,7 +281,7 @@ require restructuring.
   `w_transport` entirely rather than shipped as a dead tap target (Phase 5)
 - A fast pre-decode artwork palette/accent path — today's accent color and pale-cover scrim
   adjustment both wait on the one full JPEG decode (avg 660 ms / max ~1.8 s, RISKS.md R1);
-  a cheap low-res pre-pass could make the crossfade feel closer to instant
+  a cheap low-res pre-pass could shrink the placeholder-to-artwork window
 - `svc_spotify` polish: `reauth_recommended` is set one refresh cycle later than it needs to
   be; `spotify set-avr-device` accepts an arbitrary device-id string without checking it
   against a non-blank name, so a malformed manual pin could persist a blank-name entry

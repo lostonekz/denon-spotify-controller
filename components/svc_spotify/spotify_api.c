@@ -37,7 +37,6 @@ static bool do_request(net_http_t *http, const http_policy_t *policy, const char
     net_http_request_opts_t opts = {
         .method               = method,
         .bearer_token         = access_token,
-        .body                 = { 0 },
         .retryable_after_send = retryable,
     };
     return net_http_request(http, url, &opts, policy, out_buf, out_cap, resp);
@@ -179,7 +178,8 @@ spotify_api_result_t spotify_api_execute_cmd(net_http_t *http, const http_policy
 
     char buf[256];
     net_http_response_t resp = { 0 };
-    if (!do_request(http, policy, url, method, access_token, retryable, buf, sizeof(buf), &resp)) {
+    if (!do_request(http, policy, url, method, access_token, retryable,
+                       buf, sizeof(buf), &resp)) {
         return SPOTIFY_API_RESULT_FAILED;
     }
     if (resp.status_code == 401) {

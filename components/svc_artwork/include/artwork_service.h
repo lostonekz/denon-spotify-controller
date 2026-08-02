@@ -67,9 +67,22 @@ extern "C" {
  * spotify_api_get_player_state()'s buffer earlier this same tier. Tier 6's
  * own measurement was real but evidently not against a wide enough sample
  * of real cover art. Raised with real margin, not just enough to clear
- * one failure -- PSRAM cost is negligible against ~3 MiB free. */
-#define ARTWORK_JPEG_STAGING_BYTES (256u * 1024u)
+ * one failure -- PSRAM cost is negligible against ~3 MiB free.
+ *
+ * Raised again, 256 KiB -> 512 KiB (real hardware, post-Tier-7): the SAME
+ * JDR_INP signature recurred on a specific real cover (Capital Cities,
+ * "Safe and Sound") even at 256 KiB, confirmed reproducible across many
+ * independent fetches of the identical URL -- not explained away as
+ * transient network flakiness, since a transient failure wouldn't repeat
+ * identically every single time. artwork_service.c's own decode-failure
+ * log now also prints resp.len against this constant, so a future
+ * recurrence is self-diagnosing (resp.len == this value means genuinely
+ * truncated by this cap; resp.len < this value means the server/connection
+ * itself closed early, a real network issue this buffer size can't fix --
+ * see handle_track_change()'s own bounded-retry comment for that case). */
+#define ARTWORK_JPEG_STAGING_BYTES (512u * 1024u)
 #define ARTWORK_PLAYBACK_SUB_DEPTH 4
+#define ARTWORK_FETCH_MAX_ATTEMPTS 3   /* handle_track_change()'s own comment */
 
 typedef struct {
     core_eventbus_t *bus;
@@ -94,7 +107,20 @@ typedef struct {
     eventbus_sub_h  playback_sub;
     event_t         playback_sub_storage[ARTWORK_PLAYBACK_SUB_DEPTH];
 
-    char             last_track_id[PLAYBACK_TRACK_ID_MAX];
+    char             last_track_id[PLAYBACK_TRACK_ID_MAX];   /* set once this track is
+                                                                 DONE -- either a successful
+                                                                 decode, or ARTWORK_FETCH_
+                                                                 MAX_ATTEMPTS exhausted --
+                                                                 handle_track_change() skips
+                                                                 entirely once this matches */
+    char                attempt_track_id[PLAYBACK_TRACK_ID_MAX];   /* which track attempt_count
+                                                                     * below is counting for --
+                                                                     * separate from last_track_id
+                                                                     * so a still-in-progress
+                                                                     * retry sequence (not yet
+                                                                     * given up on) doesn't get
+                                                                     * skipped by the check above */
+    uint8_t                attempt_count;
     artwork_handle_t current_handle;   /* generation == 0 means "none" -- core_pool_slot_t's
                                           * own contract: generation bumps on acquire, so a
                                           * genuinely acquired handle is never generation 0 */

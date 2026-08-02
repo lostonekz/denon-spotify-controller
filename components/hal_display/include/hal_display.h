@@ -14,19 +14,30 @@
  * with under real WiFi/decode load, producing a periodic, regularly-timed
  * band of corrupted/blown-out color sweeping the screen (esp_lcd_rgb_
  * panel's own CONFIG_LCD_RGB_RESTART_IN_VSYNC recovering from a real
- * bounce-buffer underrun -- RISKS.md R1's own already-documented ~7%
- * dropped/restarted-frame rate, never previously seen this visually severe
- * because it was only ever measured on Phase 0's much simpler spike code,
- * not this fully-loaded 15-service app). ui_app.c now uses LV_DISPLAY_
- * RENDER_MODE_PARTIAL with its own small intermediate draw buffer instead
- * of drawing straight into a full framebuffer -- most frames only touch a
- * small, genuinely-changed area (a moving playhead, a ticking clock), so
- * PSRAM write bandwidth drops accordingly. A second, persistent
- * framebuffer would only reintroduce exactly the staleness/tearing problem
- * a single buffer avoids for partial updates -- esp_lcd_rgb_panel's own
- * draw_bitmap() (confirmed by reading esp_lcd_panel_rgb.c directly) copies
- * a partial update into whichever framebuffer index is "current", which
- * only stays consistent frame-to-frame with exactly one buffer.
+ * bounce-buffer underrun). ui_app.c uses LV_DISPLAY_RENDER_MODE_PARTIAL
+ * with its own small intermediate draw buffer instead of drawing straight
+ * into a full framebuffer -- most frames only touch a small, genuinely-
+ * changed area, so PSRAM write bandwidth drops accordingly.
+ *
+ * Retried num_fbs=2 + LV_DISPLAY_RENDER_MODE_FULL later (chasing an
+ * unrelated real-hardware report: the progress bar/transport/labels, redrawn
+ * every UI-task tick, visibly jittering to a different vertical position
+ * almost every frame while the rarely-redrawn art card stayed rock stable)
+ * and confirmed it WORSE, not just reverted on suspicion: esp_lcd_panel_
+ * rgb.c's own rgb_panel_draw_bitmap() (read directly) shows that with
+ * bounce buffers active (this config always uses them), swapping
+ * cur_fb_index happens immediately/synchronously when flush_cb calls
+ * esp_lcd_panel_draw_bitmap(), with no wait for the CURRENT frame's real
+ * scan-out to finish first -- the bounce-buffer refill ISR reads whichever
+ * buffer is "current" at whatever row it happens to be mid-scan, so a swap
+ * landing mid-frame can start pulling from a buffer LVGL only just started
+ * drawing into. Real symptom: static black partial frames, up to the
+ * bottom ~70% of the screen, exactly the undrawn region of a buffer caught
+ * mid-draw. Fixing double-buffering correctly here would need flush_ready
+ * gated on a real VSYNC boundary after the swap actually takes effect, not
+ * synchronous inside flush_cb -- not attempted, reverted back to the
+ * known-safe single-buffer/PARTIAL config instead. The vertical-jitter
+ * report that motivated trying this is still open and still unexplained.
  */
 #ifndef HAL_DISPLAY_H
 #define HAL_DISPLAY_H

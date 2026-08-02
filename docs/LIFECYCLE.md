@@ -127,6 +127,9 @@ memory excerpt, which is what makes it safe.
   and surfaces a marker on the diagnostics screen.
 - **Nothing is ever uploaded automatically.** Full dumps leave the device only via USB, or
   encrypted to a support public key baked into the image, and only on explicit user action.
-- The one-shot local HTTP export is an inbound service and is hardened accordingly
-  ([SECURITY.md](SECURITY.md) §5): pairing PIN shown on screen, 5-minute timeout, closes on
-  first fetch, never listening otherwise.
+- The one-shot local HTTP export (deferred — [ROADMAP.md](ROADMAP.md), prerequisites
+  `net_http`/a wired fault screen don't exist yet) is planned as an inbound service, hardened
+  accordingly: pairing PIN shown on screen, 5-minute timeout, closes on first fetch, never
+  listening otherwise. `SECURITY.md` §5 no longer documents this pattern — it was rewritten
+  for the OAuth flow specifically (adr/0009, no listener at all) — so this mechanism's own
+  real security review is still owed once it's actually built, not covered by that section.
