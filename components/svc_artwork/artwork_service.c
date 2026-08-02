@@ -11,7 +11,22 @@
 
 static const char *TAG = "svc_artwork";
 
-#define ARTWORK_TASK_STACK 6144   /* ARCHITECTURE.md §4's table: "artwork", core 0, prio 3, 6 KB */
+/* ARCHITECTURE.md §4's table originally planned 6 KiB ("artwork", core 0,
+ * prio 3). Real hardware (Tier 7, chasing a live artwork-fetch failure
+ * against the real Spotify CDN) measured stack_hwm=484 bytes remaining
+ * out of that 6 KiB during the FAILING fetch path specifically -- under
+ * 8% headroom, below this project's own 25% floor (ARCHITECTURE.md §4's
+ * own CI-soak-test bar) -- not the happy path the original 6 KiB was
+ * planned against: a failed fetch retries a full TLS handshake a second
+ * time, nested deeper than one clean fetch+decode ever needs. Likely the
+ * real root cause of a garbled MBEDTLS_ERR_SSL_BAD_INPUT_DATA seen on the
+ * same failing path -- a near-overflow corrupting adjacent memory
+ * (possibly mbedTLS's own SSL context) is a simpler, better-evidenced
+ * explanation than a genuine TLS protocol violation from the CDN. Raised
+ * with real margin, not just enough to clear the floor -- this task's
+ * stack is PSRAM-backed (same file, task creation below), so the KiB cost
+ * of being generous here is negligible against ~3 MiB PSRAM free. */
+#define ARTWORK_TASK_STACK 16384
 #define ARTWORK_TASK_PRIO  3
 #define ARTWORK_TASK_CORE  0
 #define ARTWORK_TASK_IDLE_DELAY_MS 100u

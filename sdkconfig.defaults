@@ -74,3 +74,18 @@ CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 # whole concern is version drift, and an explicit pin means a future LVGL
 # release changing its default doesn't silently change ours too.
 CONFIG_LV_COLOR_DEPTH_16=y
+
+# Real bug, found live (Tier 7): every custom font tools/gen_assets.py
+# generates (ui_font_hero/body/meta/title/label/display) is emitted in
+# lv_font_conv's compressed bitmap format (bitmap_format=1 in the
+# generated .c files) by default -- but this flag was never enabled, so
+# LV_USE_FONT_COMPRESSED defaulted off. lv_font_get_bitmap_fmt_txt()
+# (managed_components/lvgl__lvgl/src/font/fmt_txt/lv_font_fmt_txt.c) logs
+# a warning and returns NULL for every glyph in that case -- no bitmap to
+# draw, so every label using one of this project's own fonts rendered
+# completely blank (title, artist, clock, volume), while LVGL's built-in
+# default font (w_transport's LV_SYMBOL_* icons, never given an explicit
+# custom font) rendered fine, which is what made this look like a data
+# problem at first rather than a font-decoding one. The decompression
+# code already exists in LVGL; this only turns it on.
+CONFIG_LV_USE_FONT_COMPRESSED=y

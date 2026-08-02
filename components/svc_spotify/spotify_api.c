@@ -2,7 +2,33 @@
 
 #include <stdio.h>
 
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+
 #define SPOTIFY_API_BASE "https://api.spotify.com/v1/me/player"
+
+static const char *TAG = "spotify_api";
+
+/* Real bug, found live (Tier 7): a fixed 4096-byte stack buffer for
+ * /v1/me/player's response -- ADR-0010's own words describe this exact
+ * response as "large (several KB), deeply nested... third-party, and
+ * evolving," yet nothing had ever actually measured it against a real
+ * account. A real response (device object, full track+artists[]+album
+ * with a multi-resolution images[] array, context, actions, ...)
+ * routinely exceeds 4096 bytes. net_http_request()'s own contract is
+ * silent truncation, not an error -- fine for artwork's binary JPEG
+ * stream, wrong for JSON, where a truncated body is just invalid input
+ * cJSON fails to parse, and a failed parse leaves DOMAIN_PLAYBACK holding
+ * whatever the last successful poll wrote (spotify_service_task.c's
+ * handle_poll_result() only writes core_state on success) -- explaining
+ * a real symptom seen live: the progress bar kept interpolating (stale
+ * position_ms + is_playing from one earlier, smaller, successfully-
+ * parsed response) while title/artist/artwork never appeared. PSRAM-
+ * backed heap allocation, not a bigger stack array -- this function runs
+ * on svc_spotify's own task, whose stack this project has deliberately
+ * kept modest (SPOTIFY_TASK_STACK, spotify_service.c). */
+#define SPOTIFY_PLAYER_STATE_BUF_BYTES 16384
+#define SPOTIFY_DEVICES_BUF_BYTES       6144
 
 static bool do_request(net_http_t *http, const http_policy_t *policy, const char *url,
                           net_http_method_t method, const char *access_token, bool retryable,
@@ -20,23 +46,37 @@ static bool do_request(net_http_t *http, const http_policy_t *policy, const char
 spotify_api_result_t spotify_api_get_player_state(net_http_t *http, const http_policy_t *policy,
                                                       const char *access_token, playback_state_t *out)
 {
-    char buf[4096];
-    net_http_response_t resp = { 0 };
-    if (!do_request(http, policy, SPOTIFY_API_BASE, NET_HTTP_METHOD_GET, access_token, true,
-                       buf, sizeof(buf), &resp)) {
-        return SPOTIFY_API_RESULT_FAILED;
-    }
-    if (resp.status_code == 401) {
-        return SPOTIFY_API_RESULT_UNAUTHORIZED;
-    }
-    if (resp.status_code == 204) {
-        return SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE;
-    }
-    if (resp.status_code < 200 || resp.status_code >= 300) {
+    char *buf = heap_caps_malloc(SPOTIFY_PLAYER_STATE_BUF_BYTES, MALLOC_CAP_SPIRAM);
+    if (buf == NULL) {
+        ESP_LOGW(TAG, "player-state buffer alloc failed");
         return SPOTIFY_API_RESULT_FAILED;
     }
 
+    net_http_response_t resp = { 0 };
+    if (!do_request(http, policy, SPOTIFY_API_BASE, NET_HTTP_METHOD_GET, access_token, true,
+                       buf, SPOTIFY_PLAYER_STATE_BUF_BYTES, &resp)) {
+        heap_caps_free(buf);
+        return SPOTIFY_API_RESULT_FAILED;
+    }
+    if (resp.status_code == 401) {
+        heap_caps_free(buf);
+        return SPOTIFY_API_RESULT_UNAUTHORIZED;
+    }
+    if (resp.status_code == 204) {
+        heap_caps_free(buf);
+        return SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE;
+    }
+    if (resp.status_code < 200 || resp.status_code >= 300) {
+        heap_caps_free(buf);
+        return SPOTIFY_API_RESULT_FAILED;
+    }
+    if (resp.len >= SPOTIFY_PLAYER_STATE_BUF_BYTES) {
+        ESP_LOGW(TAG, "player-state response filled the %d-byte buffer -- likely truncated",
+                  SPOTIFY_PLAYER_STATE_BUF_BYTES);
+    }
+
     spotify_parse_status_t ps = spotify_parse_player_state(buf, resp.len, out);
+    heap_caps_free(buf);
     if (ps == SPOTIFY_PARSE_NO_ACTIVE_DEVICE) {
         return SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE;
     }
@@ -49,20 +89,29 @@ spotify_api_result_t spotify_api_get_player_state(net_http_t *http, const http_p
 spotify_api_result_t spotify_api_get_devices(net_http_t *http, const http_policy_t *policy,
                                                  const char *access_token, spotify_device_list_t *out)
 {
-    char buf[2048];
+    char *buf = heap_caps_malloc(SPOTIFY_DEVICES_BUF_BYTES, MALLOC_CAP_SPIRAM);
+    if (buf == NULL) {
+        ESP_LOGW(TAG, "device-list buffer alloc failed");
+        return SPOTIFY_API_RESULT_FAILED;
+    }
+
     net_http_response_t resp = { 0 };
     if (!do_request(http, policy, SPOTIFY_API_BASE "/devices", NET_HTTP_METHOD_GET, access_token, true,
-                       buf, sizeof(buf), &resp)) {
+                       buf, SPOTIFY_DEVICES_BUF_BYTES, &resp)) {
+        heap_caps_free(buf);
         return SPOTIFY_API_RESULT_FAILED;
     }
     if (resp.status_code == 401) {
+        heap_caps_free(buf);
         return SPOTIFY_API_RESULT_UNAUTHORIZED;
     }
     if (resp.status_code < 200 || resp.status_code >= 300) {
+        heap_caps_free(buf);
         return SPOTIFY_API_RESULT_FAILED;
     }
 
     spotify_parse_status_t ps = spotify_parse_device_list(buf, resp.len, out);
+    heap_caps_free(buf);
     if (ps == SPOTIFY_PARSE_MALFORMED) {
         return SPOTIFY_API_RESULT_FAILED;
     }
