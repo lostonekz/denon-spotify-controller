@@ -55,10 +55,16 @@ POLICY = [
      "eFuse burn is a manufacturing-station action, never a build action"),
 
     # --- TLS memory (docs/MEMORY.md §4) ---
-    ("CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN", "4096", "MEMORY.md §4",
-     "default 16 KB fragment costs ~25 KB extra internal SRAM per session"),
+    # IN raised from 4096 back to the real protocol max (Tier 7, live real-
+    # hardware finding): i.scdn.co (Spotify's own artwork CDN) doesn't honor
+    # the negotiated 4096-byte max-fragment-length, sending full ~16KB TLS
+    # records regardless -- the ~25 KB/session this used to save was never
+    # actually being saved against this host, it was failing instead
+    # (MBEDTLS_ERR_SSL_BAD_INPUT_DATA). See MEMORY.md §4.
+    ("CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN", "16384", "MEMORY.md §4",
+     "real hosts don't all honor a reduced max-fragment-length -- see the real i.scdn.co finding"),
     ("CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN", "2048", "MEMORY.md §4",
-     "same, outbound"),
+     "outbound requests here are small GETs/PUTs, never near even 2048"),
 
     # --- watchdog (docs/ARCHITECTURE.md §4) ---
     ("CONFIG_ESP_TASK_WDT_INIT", "y", "ARCHITECTURE.md §4",

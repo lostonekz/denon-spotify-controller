@@ -34,9 +34,24 @@ CONFIG_SECURE_BOOT=n
 CONFIG_SECURE_FLASH_ENC_ENABLED=n
 
 # --- TLS memory (docs/MEMORY.md §4) ---
-# ~25 KB internal SRAM saved per session. Both Spotify and the OTA host
-# negotiate max-fragment-length correctly; verified in Phase 2.
-CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
+# Real bug, found live (Tier 7): this comment used to claim "Both Spotify
+# and the OTA host negotiate max-fragment-length correctly; verified in
+# Phase 2" -- that verification used www.google.com as the real TLS
+# handshake target, never the actual Spotify/artwork hosts (Phase 4 didn't
+# exist yet). Real testing against i.scdn.co (Spotify's own artwork CDN)
+# found it does NOT honor the negotiated 4096-byte max-fragment-length --
+# it sends full ~16KB TLS records regardless, which esp_mbedtls_dynamic_
+# impl.c has to grow its receive buffer to match (confirmed by reading
+# that file directly: the failing alloc size, ~16.7 KiB, is the real
+# uncompressed max record size, not our requested 4096). IN raised to the
+# real protocol max so a real per-record grow is what's requested up
+# front, not a stressed resize under a mismatch this specific host
+# doesn't respect -- the ~25 KiB/session this used to save was already
+# not being saved against this host in practice, it was just failing
+# instead. Internal RAM has real margin for this now (this same tier
+# moved 4 task stacks to PSRAM). OUT stays reduced -- outgoing requests
+# here are small GETs/PUTs, never near even 2048.
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=2048
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y

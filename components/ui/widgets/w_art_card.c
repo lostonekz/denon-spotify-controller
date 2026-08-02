@@ -8,7 +8,6 @@
 #endif
 
 #include "theme_colors.h"
-#include "theme_metrics.h"
 #include "view_model_scrim.h"
 
 #define W_ART_CARD_SCRIM_BASELINE_OPA 38   /* ~0.15*255 -- initial/no-artwork-yet baseline.
@@ -55,11 +54,6 @@ static uint8_t sample_bottom_band_luma(const uint16_t *buf)
         }
     }
     return (count != 0u) ? (uint8_t)(sum / count) : 0u;
-}
-
-static void anim_set_image_opa(void *var, int32_t v)
-{
-    lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)v, 0);
 }
 
 lv_obj_t *w_art_card_create(lv_obj_t *parent, w_art_card_t *w, const w_art_card_cfg_t *cfg)
@@ -164,18 +158,36 @@ void w_art_card_set_artwork(w_art_card_t *w, artwork_handle_t handle, const char
         !w->artwork_pixels.lock_copy(w->artwork_pixels.ctx, handle, w->pixel_buf, ARTWORK_PIXEL_BYTES)) {
         return;   /* stale/invalid handle, or no provider wired -- stays on placeholder */
     }
+    /* Tier 7 live debugging measured this copy at ~8ms -- not the real
+     * cost, see the render-cost comment below (and ui_app_watchdog.c's
+     * own threshold comment) for what actually is. */
     w->current_handle = handle;
-    lv_obj_invalidate(w->image);   /* pixel_buf changed under the same img_dsc.data pointer */
 
     uint8_t  luma       = sample_bottom_band_luma(w->pixel_buf);
     lv_opa_t scrim_opa = view_model_scrim_opacity_for_luma(luma);
     lv_obj_set_style_bg_opa(w->scrim, scrim_opa, 0);
 
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, w->image);
-    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_duration(&a, THEME_MOTION_SLOW_MS);
-    lv_anim_set_exec_cb(&a, anim_set_image_opa);
-    lv_anim_start(&a);
+    /* Real bug, found live (Tier 7): animating w->image's own opa from
+     * TRANSP->COVER (lv_anim_set_exec_cb(anim_set_image_opa)) forces
+     * LVGL's software renderer through a real alpha-compositing layer for
+     * every animated frame of a near-full-screen image -- the exact same
+     * class of expensive layer-allocation path as the clip_corner hang
+     * found earlier this same tier (both are LVGL layer-compositing costs
+     * this project has now hit twice). Measured live: the FIRST frame of
+     * this exact animation (the only one ever exercised on real hardware
+     * -- every earlier attempt failed before a real image ever reached
+     * this code) took 337ms in a single ui_app_task loop iteration, well
+     * over R10's 100ms stall assertion and its own "never blocks" rule.
+     * Fixed by setting full opacity directly instead of animating it --
+     * a plain opaque image blit doesn't need the alpha-compositing layer
+     * at all. Real cost: the smooth 600ms crossfade is gone, replaced by
+     * an instant pop once the pixel copy completes -- the scrim's own
+     * opacity is still applied instantly above, so this isn't a new
+     * asymmetry, just a lost polish detail. Filed as a real follow-up
+     * (either root-cause LVGL's layer-alloc cost directly, or fade via a
+     * cheaper mechanism that doesn't force a layer), not silently
+     * accepted -- same treatment this file's own top comment already
+     * gives the clip_corner/square-corners finding. */
+    lv_obj_set_style_opa(w->image, LV_OPA_COVER, 0);
+    lv_obj_invalidate(w->image);   /* pixel_buf changed under the same img_dsc.data pointer */
 }

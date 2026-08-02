@@ -58,8 +58,17 @@
 extern "C" {
 #endif
 
-#define ARTWORK_JPEG_STAGING_BYTES (96u * 1024u)   /* MEMORY.md's budget -- measured against
-                                                      * real fetched image sizes in Tier 6 */
+/* Real bug, found live (Tier 7): 96 KiB (MEMORY.md's original budget, from
+ * Tier 6's own measurement) truncated a real fetched image -- confirmed by
+ * the exact failure signature (esp_jpeg_decode returning JDR_INP, "wrong
+ * termination of input stream" -- tjpgd.h's own error code 2, not a
+ * corrupt-data or format error). net_http_request()'s own contract is
+ * silent truncation, not an error, same mechanism that undersized
+ * spotify_api_get_player_state()'s buffer earlier this same tier. Tier 6's
+ * own measurement was real but evidently not against a wide enough sample
+ * of real cover art. Raised with real margin, not just enough to clear
+ * one failure -- PSRAM cost is negligible against ~3 MiB free. */
+#define ARTWORK_JPEG_STAGING_BYTES (256u * 1024u)
 #define ARTWORK_PLAYBACK_SUB_DEPTH 4
 
 typedef struct {
