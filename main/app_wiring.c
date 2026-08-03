@@ -49,9 +49,10 @@ static time_source_t real_clock(void)
 #define SVC_OTA_TICK_PERIOD_US     ((int64_t)1 * 1000000)
 #define HEALTH_GATE_TICK_PERIOD_US ((int64_t)1 * 1000000)
 #define DENON_SETTINGS_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
-/* Frequent enough not to undercut Phase 3's own sub-100ms feedback goal --
- * docs/ROADMAP.md Phase 3's plan picked ~20-50ms; 20ms chosen here. */
-#define INTENT_DISPATCH_TICK_PERIOD_US ((int64_t)20 * 1000)
+/* No INTENT_DISPATCH_TICK_PERIOD_US anymore: intent dispatch is a task
+ * blocking on the queue rather than a periodic job polling it, which beats
+ * the ~20-50ms docs/ROADMAP.md Phase 3 asked for outright (dispatch starts
+ * on arrival) while removing 50 scheduler wakeups/second. */
 #define OTA_ARTWORK_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
 
 /* docs/NETWORKING.md §1.6, verbatim -- "OTA...gets a different policy" is
@@ -338,10 +339,10 @@ bool app_wiring_create(app_ctx_t *ctx)
         ESP_LOGE(TAG, "failed to schedule denon settings relay tick");
         return false;
     }
-    if (!svc_scheduler_post_periodic(&ctx->scheduler, INTENT_DISPATCH_TICK_PERIOD_US,
-                                       intent_dispatch_tick_trampoline, ctx,
-                                       &ctx->intent_dispatch_tick_job)) {
-        ESP_LOGE(TAG, "failed to schedule intent dispatch tick");
+    /* Not a scheduler job -- a dedicated task blocking on the queue. See
+     * app_wiring_start_intent_dispatch_task() for why. */
+    if (!app_wiring_start_intent_dispatch_task(ctx)) {
+        ESP_LOGE(TAG, "failed to start intent dispatch task");
         return false;
     }
     if (!svc_scheduler_post_periodic(&ctx->scheduler, OTA_ARTWORK_RELAY_TICK_PERIOD_US,

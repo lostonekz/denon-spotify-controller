@@ -119,7 +119,10 @@ typedef struct {
      * APP_INTENT_QUEUE_DEPTH's comment for why this is a dedicated queue,
      * not a core_eventbus topic. --- */
     QueueHandle_t        intent_queue;
-    scheduler_job_h         intent_dispatch_tick_job;
+    /* Drained by a dedicated task blocking on the queue, not a periodic
+     * scheduler job -- see app_wiring_start_intent_dispatch_task(). The
+     * scheduler_job_h this used to hold is gone with the polling job. */
+    TaskHandle_t            intent_task_handle;
     uint32_t                  intent_drop_count;
 
     /* --- denon (Phase 3) --- */

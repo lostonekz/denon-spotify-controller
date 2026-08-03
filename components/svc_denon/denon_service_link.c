@@ -68,6 +68,17 @@ static void action_enter_connected_telnet(void *ctx)
 static void action_start_connect_http(void *ctx)
 {
     svc_denon_t *d = (svc_denon_t *)ctx;
+    /* Both routes into this action mean telnet is finished with -- either it
+     * was refused outright (CONNECTING_TELNET) or the AVR closed it
+     * (CONNECTED_TELNET + TELNET_EOF) -- so release its socket now rather
+     * than leaving it held until some later promotion attempt reopens the
+     * handle. denon_telnet_open() also guards against a live fd being
+     * clobbered (see its own comment for the real leak that guard fixes);
+     * this is the other half, returning the descriptor promptly instead of
+     * holding one idle for the whole time we are on the HTTP fallback.
+     * Idempotent -- denon_telnet_close() no-ops on an already-closed fd. */
+    d->telnet_iface.close(d->telnet_iface.ctx);
+
     d->state.http_open_ok = (d->state.transport_pref != DENON_LINK_TRANSPORT_TELNET) &&
                               d->http_iface.open(d->http_iface.ctx, d->state.host);
     d->state.http_open_just_ran = true;

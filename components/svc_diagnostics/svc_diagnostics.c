@@ -102,7 +102,7 @@ void svc_diagnostics_check_coredump_on_boot(svc_diagnostics_t *d)
  * "ota" deliberately omitted: it only exists during an active OTA download,
  * so resolving its handle once at boot would almost always just fail. */
 static const char *const DIAG_TASK_NAMES[] = {
-    "ui_app", "svc_scheduler", "artwork", "denon", "spotify", "net_sup",
+    "ui_app", "svc_scheduler", "artwork", "denon", "spotify", "net_sup", "intent",
 };
 #define DIAG_TASK_COUNT (sizeof(DIAG_TASK_NAMES) / sizeof(DIAG_TASK_NAMES[0]))
 

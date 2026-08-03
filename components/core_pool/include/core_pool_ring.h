@@ -42,6 +42,32 @@ bool core_pool_ring_push(core_pool_ring_t *r, const void *elem);
  * untouched, if empty. */
 bool core_pool_ring_pop(core_pool_ring_t *r, void *out);
 
+/* Bulk forms of push/discard, for callers moving many elements at once.
+ *
+ * These exist because svc_logging pushes a whole formatted log line into a
+ * byte ring (elem_size 1) on every single ESP_LOGx call in the system,
+ * and doing that one core_pool_ring_push() call per byte meant ~256 calls
+ * -- each with its own modulo, bounds check and 1-byte memcpy -- per line,
+ * on whichever task happened to be logging. These turn the same work into
+ * at most two real memcpy()s.
+ *
+ * Both stay policy-free, exactly as this header's own top comment
+ * requires: push_bulk fills only what genuinely fits and reports how much
+ * that was, and discard is a separate explicit call. A caller that wants
+ * overwrite-oldest semantics composes the two itself and owns that
+ * decision (svc_logging.c's ring_write_overwriting() is the worked
+ * example) -- this module still decides nothing about what "full" means.
+ *
+ * push_bulk copies n * elem_size bytes from elems, in order, and returns
+ * the number of elements actually pushed: n if they all fit, otherwise
+ * however many did (0 when already full). Never overwrites unread data. */
+size_t core_pool_ring_push_bulk(core_pool_ring_t *r, const void *elems, size_t n);
+
+/* Drops the n oldest elements without copying them anywhere. Returns the
+ * number actually dropped, which is less than n only if the ring held
+ * fewer. */
+size_t core_pool_ring_discard(core_pool_ring_t *r, size_t n);
+
 size_t core_pool_ring_count(const core_pool_ring_t *r);
 size_t core_pool_ring_capacity(const core_pool_ring_t *r);
 size_t core_pool_ring_max_count(const core_pool_ring_t *r);

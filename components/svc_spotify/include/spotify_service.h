@@ -113,6 +113,42 @@ typedef struct {
     http_policy_t                  http_policy;
     kv_store_if_t                     *secure_kv;
 
+    /* One PSRAM-backed HTTP response buffer for this service's lifetime,
+     * shared by the player-state poll and the device-list fetch
+     * (SPOTIFY_RESPONSE_BUF_BYTES, spotify_api.h -- see its comment for
+     * why one buffer is enough and why it moved out of spotify_api.c).
+     * Spotify-task-only: both users run sequentially inside
+     * spotify_service_tick(), so it needs no lock. */
+    char *resp_buf;
+
+    /* Last poll's answer to "does Spotify see an active device?", so
+     * handle_poll_result() can log only the TRANSITIONS rather than
+     * every poll. A successful poll used to log nothing at all, which
+     * made "it worked for a few tries then stopped" impossible to
+     * diagnose: the moment the device vanishes from Spotify's view is
+     * exactly the event worth seeing, and it left no trace.
+     * Spotify-task-only, like resp_buf above. */
+    bool poll_had_device;
+    bool poll_ever_reported;
+
+    /* While set (and not yet elapsed), playback commands are answered
+     * immediately with NO_ACTIVE_DEVICE instead of being sent.
+     *
+     * Real-hardware finding: with no active device, each tap of Next
+     * opened its own HTTPS connection to api.spotify.com purely to be
+     * told 404 again. Because the failure prompts the user to retry,
+     * six presses in ~11s produced six full TLS handshakes, and
+     * internal_free_min fell to 891 bytes -- each session needs a
+     * ~16.7 KiB contiguous internal-RAM block for its TLS record buffer
+     * (see sdkconfig.defaults' MBEDTLS_SSL_IN_CONTENT_LEN comment), and
+     * only ~43 KiB is free. That is the same exhaustion that crashes the
+     * device, reached by nothing worse than an impatient user.
+     *
+     * Cleared as soon as the poll sees a device again, so this costs no
+     * responsiveness: the window is an upper bound, not a fixed wait. */
+    int64_t no_device_suppress_until_us;
+
+
     TaskHandle_t         task_handle;
     volatile bool           task_should_stop;
     SemaphoreHandle_t          stopped_sem;
@@ -133,6 +169,7 @@ service_desc_t svc_spotify_service_desc(svc_spotify_restart_ctx_t *restart_ctx);
  * plan §8) -- implemented for ARCHITECTURE.md §1.3's DI-shape completeness. */
 bool svc_spotify_suspend(svc_spotify_t *s);
 bool svc_spotify_resume(svc_spotify_t *s);
+
 
 /* INTENT_DOMAIN_PLAYBACK dispatch -- drop-newest on a full queue (no
  * coalescing, see Phase 4 plan §5). */

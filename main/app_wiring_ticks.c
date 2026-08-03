@@ -5,7 +5,9 @@
 
 #include <string.h>
 
+#include "esp_heap_caps.h"            /* MALLOC_CAP_SPIRAM for the intent task's stack */
 #include "esp_system.h"
+#include "freertos/idf_additions.h"   /* xTaskCreatePinnedToCoreWithCaps() */
 
 #include "app_wiring_volume.h"
 #include "settings_intent_types.h"
@@ -162,13 +164,63 @@ static void dispatch_one_intent(app_ctx_t *a, const intent_t *intent)
     }
 }
 
-void intent_dispatch_tick_trampoline(void *ctx)
+/* A dedicated task blocking on the queue, not a periodic scheduler job
+ * polling it with a zero timeout.
+ *
+ * The polled version ran every 20ms -- 50 wakeups per second of the shared
+ * svc_scheduler worker, each one almost always finding an empty queue,
+ * since intents arrive only when a user actually touches a control. It
+ * also put a 0-20ms latency floor under every tap, which is the opposite
+ * of what the 20ms period was chosen to achieve (ROADMAP Phase 3's
+ * sub-100ms feedback goal): blocking on the queue makes dispatch start the
+ * instant an intent is posted.
+ *
+ * Never returns -- there is no app_wiring teardown path in this project
+ * (the composition root lives for the life of the boot; a service restart
+ * goes through svc_supervisor, which never tears down app_ctx itself), so
+ * this deliberately has no stop flag to go with it. The same is true of
+ * svc_scheduler's own worker task, which this replaces a job on. */
+static void intent_dispatch_task(void *arg)
 {
-    app_ctx_t *a = (app_ctx_t *)ctx;
-    intent_t intent;
-    while (xQueueReceive(a->intent_queue, &intent, 0) == pdTRUE) {
-        dispatch_one_intent(a, &intent);
+    app_ctx_t *a = (app_ctx_t *)arg;
+    for (;;) {
+        intent_t intent;
+        if (xQueueReceive(a->intent_queue, &intent, portMAX_DELAY) == pdTRUE) {
+            dispatch_one_intent(a, &intent);
+        }
     }
+}
+
+bool app_wiring_start_intent_dispatch_task(app_ctx_t *ctx)
+{
+    /* Priority 5 matches `denon`/`spotify` (ARCHITECTURE.md §4) -- this
+     * task exists only to hand an intent to one of those two services'
+     * queues, so running below them would just add a scheduling hop
+     * between a tap and the service that acts on it. Core 0 with the rest
+     * of the non-UI work, keeping core 1 for the UI.
+     *
+     * 3 KB: this task only ever does a queue receive, a switch, a
+     * core_state_read() (the MULTI resolve path) and another queue send --
+     * no TLS, no NVS, no printf-family formatting, none of the deep
+     * ESP-IDF call chains that made svc_scheduler's own 3 KB too small
+     * once OTA-apply actions landed on it (see svc_scheduler.c's comment).
+     * svc_diagnostics reports this task's own high-water mark under the
+     * name below, so the assumption is checkable rather than asserted. */
+    /* PSRAM-backed stack, via xTaskCreatePinnedToCoreWithCaps() -- the same
+     * choice net_sup/denon/spotify/artwork/ui_app all make, and for the
+     * same documented reason (MEMORY.md §1): internal SRAM is the resource
+     * this whole design is rationed against, and there is very little of it
+     * spare. A first version of this task used plain
+     * xTaskCreatePinnedToCore(), which takes its stack from internal RAM --
+     * ~3 KiB out of the ~24 KiB that is actually free at runtime, i.e. an
+     * unforced ~12% cut to the scarcest resource on the board, in a system
+     * where a single artwork fetch needs a 16.7 KiB contiguous internal
+     * allocation for its TLS record buffer. The TCB still lands in internal
+     * RAM automatically (idf_additions.h's guarantee); only the stack moves. */
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(intent_dispatch_task, "intent", 3072, ctx,
+                                                       5, &ctx->intent_task_handle, 0,
+                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return ok == pdPASS;
 }
 
 /* Phase 4 plan §8: verified directly against svc_ota_download.c/svc_ota.c

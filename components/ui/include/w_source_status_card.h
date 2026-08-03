@@ -45,6 +45,13 @@ typedef struct {
     lv_obj_t *subtitle_label;
     lv_obj_t *icon_segments[W_SOURCE_STATUS_CARD_ICON_SEGMENTS_MAX];
     uint8_t     icon_segment_count;
+    /* Last applied `selected`, so the ~9 style writes it drives are only
+     * issued when it actually changes -- this widget's setter is called
+     * every UI-task tick from the Receiver screen's apply glue. See
+     * w_source_status_card_set_state()'s own comment. `applied` starts
+     * false so the first call always writes, whatever `selected` is. */
+    bool        applied;
+    bool        applied_selected;
 } w_source_status_card_t;
 
 lv_obj_t *w_source_status_card_create(lv_obj_t *parent, w_source_status_card_t *w,

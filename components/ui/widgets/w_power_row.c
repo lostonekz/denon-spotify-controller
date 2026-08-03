@@ -1,5 +1,7 @@
 #include "w_power_row.h"
 
+#include <string.h>
+
 #include "theme_colors.h"
 #include "theme_fonts.h"
 #include "theme_metrics.h"
@@ -23,6 +25,8 @@ static void on_row_clicked(lv_event_t *e)
 
 lv_obj_t *w_power_row_create(lv_obj_t *parent, w_power_row_t *w, const w_power_row_cfg_t *cfg)
 {
+    w->applied = false;   /* first w_power_row_set_state() call always writes */
+
     w->root = lv_obj_create(parent);
     if (w->root == NULL) {
         return NULL;
@@ -85,18 +89,44 @@ lv_obj_t *w_power_row_create(lv_obj_t *parent, w_power_row_t *w, const w_power_r
     return w->root;
 }
 
+/* Change-gated for the same reason as every other setter on this screen:
+ * the Receiver screen's apply glue calls this on every ui_app_task
+ * iteration (~60x/second), while power state and tone change only on real
+ * user or AVR activity. None of the LVGL calls below self-diff -- the
+ * style setters always write and refresh, lv_label_set_text() always
+ * reallocates the string, and lv_obj_align() re-marks the knob's layout
+ * dirty -- so ungated this repainted the whole row, and re-ran the inner
+ * glyph's own style writes, every frame.
+ *
+ * power_on + denon_tone together gate the style/alignment block: both
+ * colours below are derived from exactly that pair, so one comparison
+ * covers the group. w_power_glyph_set_state() is gated inside itself
+ * (same pair, its own cached copy) rather than being hidden behind this
+ * function's gate -- it is public API with other potential callers, so it
+ * owns its own no-op behaviour instead of depending on this one's. */
 void w_power_row_set_state(w_power_row_t *w, bool power_on, tone_t denon_tone, const char *power_label)
 {
     w_power_glyph_set_state(&w->glyph, power_on, denon_tone);
 
-    lv_label_set_text(w->label, power_label);
+    if (power_label != NULL) {
+        const char *current = lv_label_get_text(w->label);
+        if (current == NULL || strcmp(current, power_label) != 0) {
+            lv_label_set_text(w->label, power_label);
+        }
+    }
 
-    lv_color_t track_color = power_on
-        ? (denon_tone == TONE_LIVE ? THEME_COLOR_ACCENT_LIVE : THEME_COLOR_STALE)
-        : THEME_COLOR_SURFACE_HIGH;
-    lv_obj_set_style_bg_color(w->switch_track, track_color, 0);
-    lv_obj_set_style_bg_opa(w->switch_track, LV_OPA_COVER, 0);
+    if (!w->applied || w->applied_power_on != power_on || w->applied_tone != denon_tone) {
+        w->applied          = true;
+        w->applied_power_on = power_on;
+        w->applied_tone     = denon_tone;
 
-    lv_obj_align(w->switch_knob, power_on ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID,
-                 power_on ? -W_POWER_ROW_KNOB_INSET : W_POWER_ROW_KNOB_INSET, 0);
+        lv_color_t track_color = power_on
+            ? (denon_tone == TONE_LIVE ? THEME_COLOR_ACCENT_LIVE : THEME_COLOR_STALE)
+            : THEME_COLOR_SURFACE_HIGH;
+        lv_obj_set_style_bg_color(w->switch_track, track_color, 0);
+        lv_obj_set_style_bg_opa(w->switch_track, LV_OPA_COVER, 0);
+
+        lv_obj_align(w->switch_knob, power_on ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID,
+                     power_on ? -W_POWER_ROW_KNOB_INSET : W_POWER_ROW_KNOB_INSET, 0);
+    }
 }

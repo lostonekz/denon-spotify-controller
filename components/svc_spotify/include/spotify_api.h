@@ -19,11 +19,33 @@
 extern "C" {
 #endif
 
+/* SPOTIFY_RESPONSE_BUF_BYTES: the size a caller must provide for the two
+ * response-parsing calls below. Sized for /v1/me/player, the larger of the
+ * two (a real response with a full track + artists[] + album images[],
+ * device object, context and actions routinely exceeds 4096 -- see
+ * spotify_api.c's own comment on the real truncation bug that measured
+ * this). The device-list response is much smaller and deliberately shares
+ * the same buffer rather than justifying a second one.
+ *
+ * The buffer is caller-owned, not allocated per call: both of these run on
+ * svc_spotify's own task, sequentially and never concurrently (the poll
+ * from spotify_service_tick(), the device list from a ctrl command drained
+ * at the top of that same function), so one buffer for the service's
+ * lifetime is enough. Previously each call heap_caps_malloc()'d and freed
+ * 16 KiB of PSRAM -- on the poll path that is a real allocate/free pair
+ * every 5 seconds, forever, purely to hold a response for the few
+ * milliseconds it takes to parse. Passing it in also keeps these functions
+ * free of any allocation policy of their own, matching how every other
+ * buffer in this project is owned by a named domain (MEMORY.md §2). */
+#define SPOTIFY_RESPONSE_BUF_BYTES 16384
+
 spotify_api_result_t spotify_api_get_player_state(net_http_t *http, const http_policy_t *policy,
-                                                      const char *access_token, playback_state_t *out);
+                                                      const char *access_token,
+                                                      char *buf, size_t buf_cap, playback_state_t *out);
 
 spotify_api_result_t spotify_api_get_devices(net_http_t *http, const http_policy_t *policy,
-                                                 const char *access_token, spotify_device_list_t *out);
+                                                 const char *access_token,
+                                                 char *buf, size_t buf_cap, spotify_device_list_t *out);
 
 spotify_api_result_t spotify_api_execute_cmd(net_http_t *http, const http_policy_t *policy,
                                                  const char *access_token, const spotify_api_cmd_t *cmd);

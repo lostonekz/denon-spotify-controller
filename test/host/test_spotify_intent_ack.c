@@ -18,11 +18,19 @@ static void test_ok_is_accepted(void)
                         spotify_intent_ack_kind_for_result(SPOTIFY_API_RESULT_OK));
 }
 
-static void test_no_active_device_is_rejected(void)
+static void test_no_active_device_is_its_own_kind_not_rejected(void)
 {
-    /* Not an error for a plain status poll, but a real command failure from
-     * the intent's own point of view -- there was nothing to play/pause/skip. */
-    TEST_ASSERT_EQUAL(INTENT_ACK_EVT_REJECTED,
+    /* Deliberately NOT INTENT_ACK_EVT_REJECTED, which this used to assert.
+     * The command did fail from the intent's point of view -- there was
+     * nothing to play/pause/skip -- but the cause is categorically different
+     * from a failed or unreachable call, and real hardware proved the
+     * distinction matters: an AVR whose Spotify Connect session flaps in and
+     * out made this a routine occurrence, and collapsing it into REJECTED
+     * forced the UI to claim "Couldn't reach Spotify" about a request
+     * Spotify had answered correctly (HTTP 404, reason NO_ACTIVE_DEVICE).
+     * A distinct kind is what lets the UI say something true, and lets
+     * svc_spotify suppress a retry storm it can answer locally. */
+    TEST_ASSERT_EQUAL(INTENT_ACK_EVT_NO_ACTIVE_DEVICE,
                         spotify_intent_ack_kind_for_result(SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE));
 }
 
@@ -42,7 +50,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_ok_is_accepted);
-    RUN_TEST(test_no_active_device_is_rejected);
+    RUN_TEST(test_no_active_device_is_its_own_kind_not_rejected);
     RUN_TEST(test_unauthorized_is_rejected);
     RUN_TEST(test_failed_is_rejected);
     return UNITY_END();

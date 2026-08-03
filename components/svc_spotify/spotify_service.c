@@ -116,6 +116,21 @@ bool svc_spotify_create(svc_spotify_t *s, const svc_spotify_cfg_t *cfg)
         return false;
     }
 
+    /* One response buffer for this service's lifetime, instead of a
+     * heap_caps_malloc()/free() pair inside every single API call (see
+     * SPOTIFY_RESPONSE_BUF_BYTES in spotify_api.h). PSRAM-backed for the
+     * same reason this task's own stack is: internal SRAM is the scarce
+     * resource here and 16 KiB of it, held permanently, is not affordable
+     * (MEMORY.md §1/§4). */
+    s->resp_buf = heap_caps_malloc(SPOTIFY_RESPONSE_BUF_BYTES, MALLOC_CAP_SPIRAM);
+    if (s->resp_buf == NULL) {
+        ESP_LOGE(TAG, "response buffer alloc failed");
+        vSemaphoreDelete(s->session_lock);
+        vSemaphoreDelete(s->stopped_sem);
+        s->stopped_sem = NULL;
+        return false;
+    }
+
     s->task_should_stop = false;
     /* PSRAM-backed stack -- MEMORY.md §4's real-hardware finding: real
      * internal-SRAM margin is only ~138 KiB (idf.py size's DIRAM total),
@@ -130,6 +145,8 @@ bool svc_spotify_create(svc_spotify_t *s, const svc_spotify_cfg_t *cfg)
         vSemaphoreDelete(s->session_lock);
         vSemaphoreDelete(s->stopped_sem);
         s->stopped_sem = NULL;
+        heap_caps_free(s->resp_buf);
+        s->resp_buf = NULL;
         return false;
     }
     return true;

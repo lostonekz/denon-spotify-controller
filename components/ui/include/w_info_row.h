@@ -32,6 +32,12 @@ typedef struct {
     lv_obj_t *dot;      /* NULL if cfg->show_status_dot was false */
     lv_obj_t *label;
     lv_obj_t *value;
+    /* Last applied value colour, so the dot/text style writes it drives
+     * are only issued on a real change -- these setters are called every
+     * UI-task tick. `applied` starts false so the first call always
+     * writes, whatever colour it carries. See info_row_apply(). */
+    bool        applied;
+    lv_color_t applied_color;
 } w_info_row_t;
 
 lv_obj_t *w_info_row_create(lv_obj_t *parent, w_info_row_t *w, const w_info_row_cfg_t *cfg);

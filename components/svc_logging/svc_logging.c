@@ -13,16 +13,40 @@
  * esp_log system per process anyway. */
 static svc_logging_t *g_logger = NULL;
 
+/* Overwrite-oldest is this module's policy, not core_pool_ring's (that
+ * header is explicit that "what happens when the ring is full... lives one
+ * layer up"), so it stays expressed here -- but composed from the ring's
+ * bulk primitives instead of a per-byte loop.
+ *
+ * This runs inside the esp_log vprintf hook, i.e. on whichever task called
+ * ESP_LOGx, with the logging mutex held. The old loop did one
+ * core_pool_ring_push() call per byte -- roughly 256 calls, each with its
+ * own full/bounds check, modulo and single-byte memcpy, for one log line.
+ * This does at most three memcpy-class operations total regardless of line
+ * length, which matters because every log line in the system pays it.
+ *
+ * The `len >= cap` case is not just an optimisation: without it, a line
+ * longer than the whole ring would discard and re-push its way through the
+ * buffer repeatedly, ending with only its tail retained anyway. Trimming
+ * up front makes that outcome explicit and bounds the work. */
 static void ring_write_overwriting(core_pool_ring_t *ring, const char *data, size_t len)
 {
-    for (size_t i = 0; i < len; i++) {
-        if (core_pool_ring_is_full(ring)) {
-            uint8_t discard;
-            core_pool_ring_pop(ring, &discard);
-        }
-        uint8_t byte = (uint8_t)data[i];
-        core_pool_ring_push(ring, &byte);
+    size_t cap = core_pool_ring_capacity(ring);
+    if (cap == 0 || len == 0) {
+        return;
     }
+    if (len >= cap) {
+        /* Only the final `cap` bytes could survive -- keep the newest,
+         * matching the overwrite-oldest policy this function implements. */
+        data += (len - cap);
+        len   = cap;
+    }
+
+    size_t free_slots = cap - core_pool_ring_count(ring);
+    if (len > free_slots) {
+        core_pool_ring_discard(ring, len - free_slots);
+    }
+    core_pool_ring_push_bulk(ring, data, len);
 }
 
 static int log_vprintf_hook(const char *fmt, va_list args)

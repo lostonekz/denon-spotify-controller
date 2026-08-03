@@ -85,6 +85,7 @@ lv_obj_t *w_power_glyph_create(lv_obj_t *parent, w_power_glyph_t *w, const w_pow
 {
     w->intent_submit  = cfg->intent_submit;
     w->last_power_on = false;
+    w->applied         = false;   /* first w_power_glyph_set_state() call always writes */
 
     w->root = lv_obj_create(parent);
     if (w->root == NULL) {
@@ -153,9 +154,27 @@ lv_obj_t *w_power_glyph_create(lv_obj_t *parent, w_power_glyph_t *w, const w_pow
     return w->root;
 }
 
+/* Owns its own no-op check rather than relying on its caller's: this is
+ * public API, and w_power_row_set_state() (its per-tick caller today,
+ * ~60x/second) deliberately calls it before its own change gate so that a
+ * future second caller can't lose the behaviour. The three style writes
+ * below don't self-diff -- lv_obj_set_style_*() always writes and calls
+ * lv_obj_refresh_style() (LVGL's lv_obj_style.c) -- so repeat calls with
+ * unchanged state were repainting the ring and notch every frame.
+ *
+ * last_power_on is still updated unconditionally, before the gate: it is
+ * not just a render cache, on_glyph_clicked()/w_power_glyph_toggle() read
+ * it to decide which direction the next tap means. */
 void w_power_glyph_set_state(w_power_glyph_t *w, bool power_on, tone_t denon_tone)
 {
     w->last_power_on = power_on;
+
+    if (w->applied && w->applied_power_on == power_on && w->applied_tone == denon_tone) {
+        return;
+    }
+    w->applied          = true;
+    w->applied_power_on = power_on;
+    w->applied_tone     = denon_tone;
 
     lv_color_t color;
     if (!power_on) {

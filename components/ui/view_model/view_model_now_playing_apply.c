@@ -82,6 +82,12 @@ void view_model_now_playing_apply_tick(view_model_now_playing_apply_t *a)
         }
         if (evt.u.intent_ack.kind == INTENT_ACK_EVT_REJECTED) {
             w_toast_show(&a->screen_ctx->toast, "Couldn't reach Spotify -- try again");
+        } else if (evt.u.intent_ack.kind == INTENT_ACK_EVT_NO_ACTIVE_DEVICE) {
+            /* Not a reachability failure -- Spotify replied, it just has
+             * no active device. Saying "couldn't reach" here sent the
+             * user looking for a network fault that does not exist; the
+             * real remedy is to start playback (or hand it to the AVR). */
+            w_toast_show(&a->screen_ctx->toast, "Nothing playing on Spotify -- press Play");
         }
         a->pending = false;
     }

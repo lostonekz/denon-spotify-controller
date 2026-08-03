@@ -29,7 +29,34 @@ static bool set_nonblocking(int fd)
 static bool denon_telnet_open(void *vctx, const char *host)
 {
     denon_telnet_ctx_t *ctx = (denon_telnet_ctx_t *)vctx;
-    ctx->fd    = -1;
+
+    /* Real bug, found on real hardware: this used to assign ctx->fd = -1
+     * directly, which ORPHANS a still-open socket instead of closing it.
+     *
+     * That leaked one descriptor per reconnect, and this link reconnects
+     * constantly by design: TELNET_EOF falls straight through to
+     * CONNECTING_HTTP (adr/0003 point 2), and the only action that closes
+     * the transports -- action_release_link() -- is not on that path, so
+     * the telnet socket stayed open until the next promotion attempt came
+     * back here and overwrote the handle. Against a real AVR-X3800H whose
+     * HEOS firmware drops the telnet connection every ~10s (the documented
+     * "telnet goes unresponsive" behaviour this project already works
+     * around elsewhere), that is a leak every 10 seconds.
+     *
+     * Measured: first `esp-tls: Failed to create socket` at 176s of uptime,
+     * followed by 57 more and total loss of networking -- discovery,
+     * artwork and Spotify all fail once LWIP's socket table is full, and
+     * the panel can no longer even power the receiver on. It presents as
+     * "it worked when I turned it on and got worse over time", because the
+     * leak is purely a function of uptime.
+     *
+     * Closing here rather than only on the EOF path is deliberate: this is
+     * the one function that can clobber the handle, so guarding it makes
+     * the leak unreachable no matter which FSM route led here. */
+    if (ctx->fd >= 0) {
+        lwip_close(ctx->fd);
+        ctx->fd = -1;
+    }
     ctx->rxlen = 0;
 
     if (host == NULL) {

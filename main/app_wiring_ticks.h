@@ -16,7 +16,11 @@ void net_time_tick_trampoline(void *ctx);
 void svc_ota_tick_trampoline(void *ctx);
 void health_gate_relay_tick_trampoline(void *ctx);
 void denon_settings_relay_tick_trampoline(void *ctx);
-void intent_dispatch_tick_trampoline(void *ctx);
+/* Not a tick trampoline: creates the dedicated task that blocks on
+ * ctx->intent_queue and dispatches each intent the moment it arrives.
+ * Replaces the 20ms periodic polling job this used to be -- see the
+ * function's own comment. Returns false if the task could not be created. */
+bool app_wiring_start_intent_dispatch_task(app_ctx_t *ctx);
 
 /* Phase 4: svc_ota already publishes OTA_EVT_PROGRESS/OTA_EVT_FAILED (no
  * new OTA-side publish path needed, verified directly against

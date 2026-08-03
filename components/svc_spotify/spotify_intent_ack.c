@@ -6,6 +6,7 @@ intent_ack_evt_kind_t spotify_intent_ack_kind_for_result(spotify_api_result_t r)
     case SPOTIFY_API_RESULT_OK:
         return INTENT_ACK_EVT_ACCEPTED;
     case SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE:
+        return INTENT_ACK_EVT_NO_ACTIVE_DEVICE;
     case SPOTIFY_API_RESULT_UNAUTHORIZED:
     case SPOTIFY_API_RESULT_FAILED:
         return INTENT_ACK_EVT_REJECTED;

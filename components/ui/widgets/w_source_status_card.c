@@ -1,5 +1,7 @@
 #include "w_source_status_card.h"
 
+#include <string.h>
+
 #include "theme_colors.h"
 #include "theme_fonts.h"
 #include "theme_metrics.h"
@@ -77,6 +79,8 @@ lv_obj_t *w_source_status_card_create(lv_obj_t *parent, w_source_status_card_t *
                                           const w_source_status_card_cfg_t *cfg)
 {
     w->icon_segment_count = 0;
+    w->applied              = false;   /* first w_source_status_card_set_state() call
+                                            always writes */
 
     w->root = lv_obj_create(parent);
     if (w->root == NULL) {
@@ -139,27 +143,57 @@ lv_obj_t *w_source_status_card_create(lv_obj_t *parent, w_source_status_card_t *
     return w->root;
 }
 
+/* Both halves of this setter are change-gated, because the Receiver
+ * screen's apply glue (view_model_denon_apply_tick) calls it on every
+ * ui_app_task iteration -- roughly 60x/second -- while its inputs change
+ * only when the user actually switches source.
+ *
+ * Neither LVGL call underneath has an internal no-op check:
+ * lv_obj_set_style_*() resolves to lv_obj_set_local_style_prop(), which
+ * unconditionally writes the property and calls lv_obj_refresh_style(),
+ * and lv_label_set_text() unconditionally lv_free()s and re-lv_malloc()s
+ * the string before invalidating (both confirmed by reading LVGL's own
+ * lv_obj_style.c / lv_label.c). Ungated, this repainted the whole card --
+ * background, border, title, and every icon segment -- every frame, to
+ * redraw pixels identical to the ones already on screen, competing with
+ * the RGB panel's own DMA for the PSRAM bus (RISKS.md R1).
+ *
+ * `selected` gates the style block rather than each property
+ * individually: every colour and width below is derived purely from it,
+ * so one comparison is sufficient and there is no way for the group to
+ * drift out of sync. The subtitle is diffed separately since it changes
+ * independently (and more often). */
 void w_source_status_card_set_state(w_source_status_card_t *w, bool selected, const char *subtitle)
 {
-    lv_color_t bg_color   = selected ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_SURFACE_HIGH;
-    lv_color_t fg_color   = selected ? THEME_COLOR_SURFACE      : THEME_COLOR_TEXT_PRIMARY;
+    if (!w->applied || w->applied_selected != selected) {
+        w->applied          = true;
+        w->applied_selected = selected;
 
-    lv_obj_set_style_bg_color(w->root, bg_color, 0);
-    lv_obj_set_style_bg_opa(w->root, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(w->root, selected ? 0 : W_SOURCE_STATUS_CARD_BORDER_W, 0);
-    lv_obj_set_style_border_color(w->root, THEME_COLOR_TEXT_TERTIARY, 0);
+        lv_color_t bg_color   = selected ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_SURFACE_HIGH;
+        lv_color_t fg_color   = selected ? THEME_COLOR_SURFACE      : THEME_COLOR_TEXT_PRIMARY;
 
-    lv_obj_set_style_text_color(w->title_label, fg_color, 0);
+        lv_obj_set_style_bg_color(w->root, bg_color, 0);
+        lv_obj_set_style_bg_opa(w->root, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(w->root, selected ? 0 : W_SOURCE_STATUS_CARD_BORDER_W, 0);
+        lv_obj_set_style_border_color(w->root, THEME_COLOR_TEXT_TERTIARY, 0);
 
-    for (uint8_t i = 0; i < w->icon_segment_count; i++) {
-        lv_obj_t *seg = w->icon_segments[i];
-        /* TV's screen segment is an outline (transparent fill, colored
-         * border); every other segment (bars, TV's stand) is a filled
-         * rect -- setting both properties on every segment is harmless,
-         * only the one each shape actually uses takes visible effect. */
-        lv_obj_set_style_bg_color(seg, fg_color, 0);
-        lv_obj_set_style_border_color(seg, fg_color, 0);
+        lv_obj_set_style_text_color(w->title_label, fg_color, 0);
+
+        for (uint8_t i = 0; i < w->icon_segment_count; i++) {
+            lv_obj_t *seg = w->icon_segments[i];
+            /* TV's screen segment is an outline (transparent fill, colored
+             * border); every other segment (bars, TV's stand) is a filled
+             * rect -- setting both properties on every segment is harmless,
+             * only the one each shape actually uses takes visible effect. */
+            lv_obj_set_style_bg_color(seg, fg_color, 0);
+            lv_obj_set_style_border_color(seg, fg_color, 0);
+        }
     }
 
-    lv_label_set_text(w->subtitle_label, subtitle);
+    if (subtitle != NULL) {
+        const char *current = lv_label_get_text(w->subtitle_label);
+        if (current == NULL || strcmp(current, subtitle) != 0) {
+            lv_label_set_text(w->subtitle_label, subtitle);
+        }
+    }
 }
