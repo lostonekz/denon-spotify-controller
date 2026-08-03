@@ -19,8 +19,17 @@ static const char *TAG = "w_power_glyph";
 
 static void submit_denon(w_power_glyph_t *w, denon_intent_kind_t kind, const denon_intent_payload_t *payload)
 {
+    /* Same treatment as w_volume_slider.c's own on_value_changed(): these
+     * three were ESP_LOGW "DIAG:" lines from the Tier 7 live investigation
+     * into the power glyph's "does nothing" report (root-caused since -- the
+     * default-CLICKABLE child swallowing taps, see w->ring's own comment
+     * below). Demoted to DEBUG rather than deleted, same reasoning. Tap-rate
+     * only, not per-tick like the volume slider's, but this widget is real
+     * Phase 6 infrastructure that will be re-mounted on the Receiver screen,
+     * and shipping a widget that logs at WARN on every ordinary tap is a cost
+     * its future caller inherits silently. */
     if (w->intent_submit.submit == NULL) {
-        ESP_LOGW(TAG, "DIAG: submit_denon kind=%d -- intent_submit.submit is NULL, not wired", (int)kind);
+        ESP_LOGD(TAG, "submit_denon kind=%d -- intent_submit.submit is NULL, not wired", (int)kind);
         return;   /* not wired -- fail silent, matching w_transport's own contract */
     }
     intent_t intent = { 0 };
@@ -28,15 +37,11 @@ static void submit_denon(w_power_glyph_t *w, denon_intent_kind_t kind, const den
     intent.kind   = (uint16_t)kind;
     memcpy(intent.payload, payload, sizeof(*payload));
     bool ok = w->intent_submit.submit(w->intent_submit.ctx, &intent);
-    ESP_LOGW(TAG, "DIAG: submit_denon kind=%d submitted, ok=%d", (int)kind, (int)ok);
+    ESP_LOGD(TAG, "submit_denon kind=%d submitted, ok=%d", (int)kind, (int)ok);
 }
 
-static void on_glyph_clicked(lv_event_t *e)
+void w_power_glyph_toggle(w_power_glyph_t *w)
 {
-    w_power_glyph_t *w = (w_power_glyph_t *)lv_event_get_user_data(e);
-
-    ESP_LOGW(TAG, "DIAG: on_glyph_clicked fired, last_power_on=%d", (int)w->last_power_on);
-
     bool turning_on = !w->last_power_on;
 
     denon_intent_payload_t power_payload = { .power_on = turning_on };
@@ -67,6 +72,13 @@ static void on_glyph_clicked(lv_event_t *e)
         submit_denon(w, DENON_INTENT_SET_INPUT, &input_payload);
         submit_denon(w, DENON_INTENT_SET_POWER, &power_payload);
     }
+}
+
+static void on_glyph_clicked(lv_event_t *e)
+{
+    w_power_glyph_t *w = (w_power_glyph_t *)lv_event_get_user_data(e);
+    ESP_LOGD(TAG, "on_glyph_clicked fired, last_power_on=%d", (int)w->last_power_on);
+    w_power_glyph_toggle(w);
 }
 
 lv_obj_t *w_power_glyph_create(lv_obj_t *parent, w_power_glyph_t *w, const w_power_glyph_cfg_t *cfg)

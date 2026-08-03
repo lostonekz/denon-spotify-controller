@@ -113,6 +113,18 @@ typedef struct {
      * that field. */
     int consecutive_silent_poll_rounds;
 
+    /* Round-trip latency bookkeeping for the Connection screen -- an honest
+     * approximation ("time from our last sent command to the next line
+     * received on this link"), not per-command request/response
+     * correlation (the protocol has no request IDs, and broadcasts can
+     * arrive unprompted between a send and its real reply). last_send_us is
+     * only meaningful while round_trip_pending is true; a line that arrives
+     * with nothing recently sent (round_trip_pending == false) doesn't
+     * produce a reading. Both zero-initialized by memset in _init()/_reset()
+     * below, matching every other field here. */
+    int64_t last_send_us;
+    bool    round_trip_pending;
+
     /* Cross-boundary results from denon_service_link.c's actions, and its
      * own backoff/promotion timers -- see that file's top comment for why
      * an action cannot safely dispatch back into the FSM itself. */

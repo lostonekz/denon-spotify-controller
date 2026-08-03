@@ -89,6 +89,34 @@ static void test_half_db_max_value(void)
     TEST_ASSERT_EQUAL_STRING("98.5", buf);
 }
 
+static void test_uptime_minutes_only(void)
+{
+    char buf[16];
+    view_model_format_uptime(45 * 60, buf, sizeof(buf));   /* 45 minutes, no whole hour yet */
+    TEST_ASSERT_EQUAL_STRING("45 m", buf);
+}
+
+static void test_uptime_hours_and_minutes(void)
+{
+    char buf[16];
+    view_model_format_uptime(2 * 3600 + 14 * 60, buf, sizeof(buf));   /* 2h 14m, no whole day yet */
+    TEST_ASSERT_EQUAL_STRING("2 h 14 m", buf);
+}
+
+static void test_uptime_days_and_hours(void)
+{
+    char buf[16];
+    view_model_format_uptime(6 * 86400 + 4 * 3600 + 30 * 60, buf, sizeof(buf));   /* 6d 4h -- minutes dropped */
+    TEST_ASSERT_EQUAL_STRING("6 d 4 h", buf);
+}
+
+static void test_uptime_zero(void)
+{
+    char buf[16];
+    view_model_format_uptime(0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("0 m", buf);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -103,5 +131,9 @@ int main(void)
     RUN_TEST(test_half_db_half_step);
     RUN_TEST(test_half_db_typical_value);
     RUN_TEST(test_half_db_max_value);
+    RUN_TEST(test_uptime_minutes_only);
+    RUN_TEST(test_uptime_hours_and_minutes);
+    RUN_TEST(test_uptime_days_and_hours);
+    RUN_TEST(test_uptime_zero);
     return UNITY_END();
 }

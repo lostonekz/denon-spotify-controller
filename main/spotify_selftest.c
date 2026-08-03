@@ -27,6 +27,7 @@ static const char *status_name(spotify_session_summary_t s)
     case SPOTIFY_SESSION_PAIRING:         return "PAIRING";
     case SPOTIFY_SESSION_ACTIVE:          return "ACTIVE";
     case SPOTIFY_SESSION_REAUTH_REQUIRED: return "REAUTH_REQUIRED";
+    case SPOTIFY_SESSION_REFRESHING:      return "REFRESHING";
     default:                              return "?";
     }
 }

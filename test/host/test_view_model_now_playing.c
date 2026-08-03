@@ -106,7 +106,7 @@ static void test_empty_title_and_album_falls_back_to_unknown_track(void)
     denon_state_t denon = make_denon();
 
     now_playing_vm_t vm = view_model_now_playing_build(&pb, &denon, g_clock, false);
-    TEST_ASSERT_EQUAL_STRING("Unknown Track", vm.title);
+    TEST_ASSERT_EQUAL_STRING("--", vm.title);
 }
 
 static void test_empty_device_id_means_no_active_device(void)

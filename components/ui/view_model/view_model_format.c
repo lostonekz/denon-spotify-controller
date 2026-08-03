@@ -35,3 +35,26 @@ void view_model_format_half_db(uint16_t half_db, char *buf, size_t buflen)
     unsigned frac  = (unsigned)((half_db % 2u) * 5u);
     snprintf(buf, buflen, "%u.%u", whole, frac);
 }
+
+/* System screen's "Awake for" -- days+hours once past a day (e.g. "6 d
+ * 4 h"), otherwise hours+minutes (e.g. "2 h 14 m"), otherwise just minutes
+ * (e.g. "45 m") -- the coarser unit is dropped entirely rather than shown
+ * as zero, matching view_model_format_mmss()'s own "no leading zero"
+ * spirit. */
+void view_model_format_uptime(uint32_t total_seconds, char *buf, size_t buflen)
+{
+    if (buflen == 0) {
+        return;
+    }
+    uint32_t minutes = total_seconds / 60u;
+    uint32_t hours   = minutes / 60u;
+    uint32_t days    = hours / 24u;
+
+    if (days > 0) {
+        snprintf(buf, buflen, "%u d %u h", (unsigned)days, (unsigned)(hours % 24u));
+    } else if (hours > 0) {
+        snprintf(buf, buflen, "%u h %u m", (unsigned)hours, (unsigned)(minutes % 60u));
+    } else {
+        snprintf(buf, buflen, "%u m", (unsigned)minutes);
+    }
+}

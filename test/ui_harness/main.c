@@ -23,11 +23,16 @@
 #include "fake_artwork_pixel_provider.h"
 #include "fake_intent_submit_provider.h"
 #include "fake_lock.h"
+#include "fake_system_apply.h"
 #include "fake_time_source.h"
 #include "fixtures.h"
+#include "screen_connection.h"
+#include "screen_denon.h"
 #include "screen_now_playing.h"
-#include "screen_stub.h"
+#include "screen_system.h"
 #include "ui_router.h"
+#include "view_model_connection_apply.h"
+#include "view_model_denon_apply.h"
 #include "view_model_now_playing_apply.h"
 
 #define UI_HARNESS_H_RES 480
@@ -35,8 +40,10 @@
 #define UI_HARNESS_LOOP_MAX_DELAY_MS 16
 
 /* Depths/policies mirror main/app_wiring_core.c's real values for these
- * same topics exactly, not arbitrary numbers. */
-#define UI_HARNESS_BUS_MAX_SUBS 8
+ * same topics exactly, not arbitrary numbers. Bumped from 8 for the two
+ * new screens' own subscriptions (Connection's own TOPIC_DENON sub, and
+ * fake_system_apply's TOPIC_NET/TOPIC_DENON/TOPIC_SPOTIFY subs). */
+#define UI_HARNESS_BUS_MAX_SUBS 16
 
 static void print_usage(void)
 {
@@ -76,9 +83,11 @@ int main(int argc, char **argv)
         { .topic = TOPIC_ARTWORK,    .depth = 2, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST, .on_release = NULL, .release_ctx = NULL },
         { .topic = TOPIC_INTENT_ACK, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST, .on_release = NULL, .release_ctx = NULL },
         { .topic = TOPIC_TOAST,      .depth = 4, .on_full = EVENT_OVERFLOW_DROP_NEWEST,    .on_release = NULL, .release_ctx = NULL },
+        { .topic = TOPIC_NET,        .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST, .on_release = NULL, .release_ctx = NULL },
+        { .topic = TOPIC_SPOTIFY,    .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST, .on_release = NULL, .release_ctx = NULL },
     };
     core_eventbus_t bus;
-    core_eventbus_init(&bus, bus_subs, UI_HARNESS_BUS_MAX_SUBS, bus_policies, 5, fake_lock_get());
+    core_eventbus_init(&bus, bus_subs, UI_HARNESS_BUS_MAX_SUBS, bus_policies, 7, fake_lock_get());
 
     fake_intent_submit_provider_t fake_intent = { 0 };
     fake_intent_submit_provider_init(&fake_intent, &bus);
@@ -111,11 +120,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* Denon/Settings stay stub screens (Phase 6) -- Now Playing is the real
-     * screen_now_playing.c, same as ui_app.c wires it on target. */
-    screen_stub_cfg_t stub_denon    = { .label = "Denon",    .bg_rgb888 = 0x141417 };
-    screen_stub_cfg_t stub_settings = { .label = "Settings", .bg_rgb888 = 0x1F1F24 };
-
+    /* Now Playing, Denon, Connection, and System are all real screens,
+     * registered in the same order and with the same providers ui_app.c
+     * wires on target. */
     static view_model_now_playing_apply_t np_apply;   /* static: outlives main()'s
                                                            own stack frame for the
                                                            whole life of this process,
@@ -129,9 +136,31 @@ int main(int argc, char **argv)
                                                           wires on target, see its own
                                                           comment there */
 
+    static view_model_denon_apply_t denon_apply;   /* static for the same reason as
+                                                        np_apply above */
+    static screen_denon_ctx_t denon_screen;
+    denon_screen.intent_submit_raw = intent_provider;   /* every control on the Receiver
+                                                             screen is Denon-domain, so the
+                                                             raw provider is the only one it
+                                                             needs -- screen_denon.h's own
+                                                             comment, matching ui_app.c */
+
+    static view_model_connection_apply_t connection_apply;
+    static screen_connection_ctx_t connection_screen;
+    connection_screen.intent_submit_raw = intent_provider;
+
+    /* System is fully read-only (no intent_submit field) and its real
+     * apply-glue (view_model_system_apply.c) calls 3 real ESP-IDF APIs
+     * directly, so it can't link into this host harness at all --
+     * fake_system_apply.c stands in, reusing the same real, portable
+     * view_model_system_build() with fixed fake values for those 3 calls. */
+    static fake_system_apply_t system_apply;
+    static screen_system_ctx_t system_screen;
+
     if (!ui_router_register_screen(&router, UI_SCREEN_NOW_PLAYING, screen_now_playing_get_interface(), &np_screen) ||
-        !ui_router_register_screen(&router, UI_SCREEN_DENON,       screen_stub_get_interface(), &stub_denon) ||
-        !ui_router_register_screen(&router, UI_SCREEN_SETTINGS,    screen_stub_get_interface(), &stub_settings)) {
+        !ui_router_register_screen(&router, UI_SCREEN_DENON,       screen_denon_get_interface(), &denon_screen) ||
+        !ui_router_register_screen(&router, UI_SCREEN_CONNECTION,  screen_connection_get_interface(), &connection_screen) ||
+        !ui_router_register_screen(&router, UI_SCREEN_SYSTEM,      screen_system_get_interface(), &system_screen)) {
         fprintf(stderr, "ui_harness: ui_router_register_screen failed\n");
         return 1;
     }
@@ -139,6 +168,21 @@ int main(int argc, char **argv)
     if (!view_model_now_playing_apply_init(&np_apply, &state, &bus, &router, &np_screen,
                                               intent_provider, fake_time_source_get(&fts))) {
         fprintf(stderr, "ui_harness: view_model_now_playing_apply_init failed\n");
+        return 1;
+    }
+
+    if (!view_model_denon_apply_init(&denon_apply, &state, &bus, &router)) {
+        fprintf(stderr, "ui_harness: view_model_denon_apply_init failed\n");
+        return 1;
+    }
+
+    if (!view_model_connection_apply_init(&connection_apply, &state, &bus, &router)) {
+        fprintf(stderr, "ui_harness: view_model_connection_apply_init failed\n");
+        return 1;
+    }
+
+    if (!fake_system_apply_init(&system_apply, &state, &bus, &router, fake_time_source_get(&fts))) {
+        fprintf(stderr, "ui_harness: fake_system_apply_init failed\n");
         return 1;
     }
 
@@ -161,7 +205,15 @@ int main(int argc, char **argv)
         lv_tick_inc(now_ms - last_tick_ms);
         last_tick_ms = now_ms;
 
+        /* Both apply ticks every iteration, same as ui_app_task does on
+         * target. Each drains its own subscriptions unconditionally (so no
+         * event ring can fill while its screen is off-view) and then calls
+         * ui_router_update(), which itself no-ops for whichever screen is
+         * not currently active. */
         view_model_now_playing_apply_tick(&np_apply);
+        view_model_denon_apply_tick(&denon_apply);
+        view_model_connection_apply_tick(&connection_apply);
+        fake_system_apply_tick(&system_apply);
 
         uint32_t next_ms = lv_timer_handler();
         uint32_t delay_ms = (next_ms < UI_HARNESS_LOOP_MAX_DELAY_MS) ? next_ms : UI_HARNESS_LOOP_MAX_DELAY_MS;

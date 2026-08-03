@@ -492,6 +492,37 @@ target_include_directories(test_view_model_now_playing PRIVATE
     "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
+dsc_add_host_test(test_view_model_denon
+    test_view_model_denon.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_denon.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_tone.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_format.c")
+target_include_directories(test_view_model_denon PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_connection
+    test_view_model_connection.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_connection.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_tone.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_format.c")
+target_include_directories(test_view_model_connection PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
+dsc_add_host_test(test_view_model_system
+    test_view_model_system.c
+    fake_time_source.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_system.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_tone.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_format.c")
+target_include_directories(test_view_model_system PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
 dsc_add_host_test(test_theme_tokens
     test_theme_tokens.c
     "${REPO_ROOT}/components/ui/theme/theme_tokens.c")

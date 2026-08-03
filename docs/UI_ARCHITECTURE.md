@@ -232,7 +232,7 @@ appear eventually. The rule:
   buffer boundary must not produce a partial codepoint. `view_model` truncation is
   codepoint-aware, and this is host-tested with deliberately adversarial strings.
 - A string that is *entirely* unrepresentable falls back to a meaningful alternative
-  (album name, or "Unknown Track") rather than rendering as a row of replacement characters,
+  (album name, or "--") rather than rendering as a row of replacement characters,
   which looks broken in a way an honest fallback does not.
 - `svc_diagnostics` counts unrepresentable-glyph events. A rising count is the signal that
   the glyph set no longer matches the user's actual library — which is how we would know to

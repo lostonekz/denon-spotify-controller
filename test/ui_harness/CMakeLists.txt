@@ -67,6 +67,7 @@ add_executable(ui_harness
     main.c
     fake_artwork_pixel_provider.c
     fake_intent_submit_provider.c
+    fake_system_apply.c
     fixtures/fixtures.c
     fixtures/fixture_artwork_pixels.c
     "${REPO_ROOT}/components/ui/view_model/view_model_tone.c"
@@ -75,6 +76,11 @@ add_executable(ui_harness
     "${REPO_ROOT}/components/ui/view_model/view_model_progress.c"
     "${REPO_ROOT}/components/ui/view_model/view_model_now_playing.c"
     "${REPO_ROOT}/components/ui/view_model/view_model_now_playing_apply.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_denon.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_denon_apply.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_connection.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_connection_apply.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_system.c"
     "${REPO_ROOT}/components/ui/assets/fonts/ui_font_display.c"
     "${REPO_ROOT}/components/ui/assets/fonts/ui_font_hero.c"
     "${REPO_ROOT}/components/ui/assets/fonts/ui_font_title.c"
@@ -85,6 +91,10 @@ add_executable(ui_harness
     "${REPO_ROOT}/components/ui/ui_router/ui_router.c"
     "${REPO_ROOT}/components/ui/widgets/w_page_edge_tab.c"
     "${REPO_ROOT}/components/ui/widgets/w_power_glyph.c"
+    "${REPO_ROOT}/components/ui/widgets/w_power_row.c"
+    "${REPO_ROOT}/components/ui/widgets/w_source_status_card.c"
+    "${REPO_ROOT}/components/ui/widgets/w_info_row.c"
+    "${REPO_ROOT}/components/ui/widgets/w_volume_cap_slider.c"
     "${REPO_ROOT}/components/ui/widgets/w_status_pill.c"
     "${REPO_ROOT}/components/ui/widgets/w_stroke_label.c"
     "${REPO_ROOT}/components/ui/widgets/w_marquee_label.c"
@@ -93,8 +103,10 @@ add_executable(ui_harness
     "${REPO_ROOT}/components/ui/widgets/w_volume_slider.c"
     "${REPO_ROOT}/components/ui/widgets/w_toast.c"
     "${REPO_ROOT}/components/ui/widgets/w_art_card.c"
-    "${REPO_ROOT}/components/ui/screens/screen_stub.c"
     "${REPO_ROOT}/components/ui/screens/screen_now_playing.c"
+    "${REPO_ROOT}/components/ui/screens/screen_denon.c"
+    "${REPO_ROOT}/components/ui/screens/screen_connection.c"
+    "${REPO_ROOT}/components/ui/screens/screen_system.c"
     "${REPO_ROOT}/components/core_state/core_state.c"
     "${REPO_ROOT}/components/core_eventbus/core_eventbus.c"
     "${REPO_ROOT}/components/core_pool/core_pool_ring.c"

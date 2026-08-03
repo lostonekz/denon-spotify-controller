@@ -72,6 +72,16 @@ typedef struct {
 
 lv_obj_t *w_power_glyph_create(lv_obj_t *parent, w_power_glyph_t *w, const w_power_glyph_cfg_t *cfg);
 
+/* Submits the same combined power+input toggle this widget's own
+ * LV_EVENT_CLICKED handler does (denon_intent_kind_t.SET_POWER +
+ * SET_INPUT, real-hardware-verified command ordering per this file's own
+ * top comment), callable from an external wrapper that wants a bigger tap
+ * target than this widget's own small hit area (e.g. the Receiver screen's
+ * w_power_row, which wraps this glyph in a full-width card and calls this
+ * from the card's own root click handler too). Both paths converge on this
+ * one real toggle implementation -- never duplicated. */
+void w_power_glyph_toggle(w_power_glyph_t *w);
+
 /* Colors the ring/notch from the combination of both real signals (gray =
  * off regardless of link tone; green = on and confirmed-healthy; amber = on
  * but the Denon link is currently STALE/RECONNECTING/UNAVAILABLE) and

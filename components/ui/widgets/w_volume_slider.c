@@ -23,7 +23,17 @@ static void on_value_changed(lv_event_t *e)
     w_volume_slider_t *w = (w_volume_slider_t *)lv_event_get_user_data(e);
     uint16_t                half_db = (uint16_t)lv_slider_get_value(w->slider);
 
-    ESP_LOGW(TAG, "DIAG: on_value_changed fired, half_db=%u, submit=%p", half_db, (void *)w->intent_submit.submit);
+    /* Was two ESP_LOGW "DIAG:" lines (one here, one on the submit result
+     * below), left over from the Tier 7 live investigation into why volume
+     * drags did nothing. LV_EVENT_VALUE_CHANGED fires continuously while a
+     * finger is down, and every log line costs the full svc_logging pipeline
+     * (vsnprintf + redaction scan + ring write) plus a blocking ~10ms UART
+     * write at 115200 -- on the UI task, mid-gesture, which is exactly the
+     * stall R10's loop-duration assertion exists to catch. Demoted to DEBUG,
+     * not deleted: CONFIG_LOG_MAXIMUM_LEVEL_DEBUG is on (sdkconfig.defaults),
+     * so this is one runtime log-level change away if this path ever needs
+     * investigating again, at zero steady-state cost. */
+    ESP_LOGD(TAG, "on_value_changed: half_db=%u submit=%p", half_db, (void *)w->intent_submit.submit);
 
     char text[W_VOLUME_SLIDER_READOUT_MAX];
     view_model_format_half_db(half_db, text, sizeof(text));
@@ -38,7 +48,7 @@ static void on_value_changed(lv_event_t *e)
     multi_intent_payload_t payload = { .volume_half_db = half_db };
     memcpy(intent.payload, &payload, sizeof(payload));
     bool ok = w->intent_submit.submit(w->intent_submit.ctx, &intent);
-    ESP_LOGW(TAG, "DIAG: submit() returned %d", (int)ok);
+    ESP_LOGD(TAG, "submit() returned %d", (int)ok);
 }
 
 lv_obj_t *w_volume_slider_create(lv_obj_t *parent, w_volume_slider_t *w, const w_volume_slider_cfg_t *cfg)

@@ -17,7 +17,7 @@ static void build_title_with_fallback(char *dst, size_t dst_cap,
     if (view_model_text_has_content(dst)) {
         return;
     }
-    view_model_text_copy_safe(dst, dst_cap, "Unknown Track");
+    view_model_text_copy_safe(dst, dst_cap, "--");
 }
 
 now_playing_vm_t view_model_now_playing_build(const playback_state_t *pb,

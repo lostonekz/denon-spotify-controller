@@ -233,6 +233,24 @@ void ui_router_update(ui_router_t *router, ui_screen_id_t id, const void *vm)
     if (id >= UI_SCREEN_COUNT || !router->registered[id] || router->screens[id].update == NULL) {
         return;
     }
+    /* Only the screen the user is actually looking at gets updated. An
+     * off-screen screen's widgets would still do real work if updated --
+     * LVGL clips the resulting *drawing* to the visible area, but the
+     * invalidation bookkeeping, layout recalculation and (before this same
+     * pass added diff gates to the widget setters) heap churn all happen
+     * before anything is clipped. Today Now Playing is the only screen with
+     * a real update path, so this changes nothing observable; it exists so
+     * that the Phase 6 Receiver/Settings screens can't quietly reintroduce a
+     * "every screen re-renders every tick" cost the moment they grow real
+     * update() bodies.
+     *
+     * dispatch_screen_change() flips router->active synchronously as part of
+     * ui_router_go_to_screen(), before the destination screen is ever
+     * updated, so a just-navigated-to screen is never skipped -- it gets its
+     * first update on the very next view_model_now_playing_apply_tick(). */
+    if (id != router->active) {
+        return;
+    }
     router->screens[id].update(&router->ctxs[id], vm);
 }
 

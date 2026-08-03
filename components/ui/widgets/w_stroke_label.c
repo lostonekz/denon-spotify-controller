@@ -1,5 +1,7 @@
 #include "w_stroke_label.h"
 
+#include <string.h>
+
 #include "theme_colors.h"
 
 /* Shared style for all 8 stroke copies, across every w_stroke_label instance --
@@ -100,8 +102,47 @@ lv_obj_t *w_stroke_label_create(lv_obj_t *parent, w_stroke_label_t *w, const w_s
     return w->root;
 }
 
+/* The unchanged-text early return below is a real, measured-by-inspection
+ * fix, not a micro-optimization. view_model_now_playing_apply_tick() runs
+ * every ui_app_task iteration (~60x/second) and unconditionally pushes the
+ * whole view model at the screen, so this function was being called that
+ * often for the title, artist, elapsed, remaining and volume readout --
+ * five instances x 9 labels = 45 lv_label_set_text() calls per tick, ~2800
+ * per second, for text that changes at most once a second (the clock) and
+ * usually not at all (title/artist).
+ *
+ * lv_label_set_text() does NOT diff -- confirmed by reading lv_label.c
+ * directly (set_text_internal(): unconditional lv_free() + lv_malloc() +
+ * copy + lv_label_mark_need_refr_text()). So each of those calls was a real
+ * heap free/alloc pair on the shared CLIB malloc heap plus a real
+ * invalidation of the label's area, meaning the largest text areas on the
+ * screen were being re-rasterized continuously -- at 9x overdraw, through a
+ * PSRAM draw buffer, then CPU-copied into the PSRAM framebuffer that the
+ * RGB panel's DMA is already reading at ~27MB/s. That is RISKS.md R1's
+ * exact contended resource, being spent on pixels identical to the ones
+ * already there.
+ *
+ * One strcmp against the foreground copy replaces all of it. The stroke
+ * copies are never set independently of fg (this function is the only
+ * writer, and it always sets all 9 together), so fg's current text is a
+ * faithful proxy for all of them -- no separate cached copy needed, and no
+ * per-instance buffer added to w_stroke_label_t.
+ *
+ * A second, non-performance benefit, real for the hero title specifically:
+ * w_marquee_label puts these labels in LV_LABEL_LONG_MODE_SCROLL, and
+ * re-setting a scrolling label's text restarts its scroll animation from
+ * the beginning. Re-setting it ~60x/second meant a long title could never
+ * actually scroll -- it was being reset far faster than it could move. */
 void w_stroke_label_set_text(w_stroke_label_t *w, const char *text)
 {
+    if (text == NULL) {
+        return;
+    }
+    const char *current = lv_label_get_text(w->fg);
+    if (current != NULL && strcmp(current, text) == 0) {
+        return;
+    }
+
     for (int i = 0; i < W_STROKE_LABEL_COPY_COUNT; i++) {
         lv_label_set_text(w->stroke[i], text);
     }

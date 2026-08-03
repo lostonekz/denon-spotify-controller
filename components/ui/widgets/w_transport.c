@@ -216,12 +216,21 @@ lv_obj_t *w_transport_create(lv_obj_t *parent, w_transport_t *w, const w_transpo
     w->intent_submit_raw = cfg->intent_submit_raw;
     w->is_playing          = false;
     w->has_active_device = false;
+    w->pending             = false;
 
     w->root = lv_obj_create(parent);
     if (w->root == NULL) {
         return NULL;
     }
     lv_obj_remove_flag(w->root, LV_OBJ_FLAG_SCROLLABLE);
+    /* Set explicitly here rather than relying on the w_transport_set_state()
+     * call at the end of this function to establish it: that setter only
+     * writes this property when `pending` actually changes, and it starts
+     * out matching the w->pending = false initialized just above, so the
+     * write would be (correctly) skipped. Stating the starting value here
+     * keeps the row's opacity a property this widget owns explicitly, not
+     * one inherited from whatever LVGL's default theme happens to leave. */
+    lv_obj_set_style_opa(w->root, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_opa(w->root, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(w->root, 0, 0);
     lv_obj_set_style_pad_all(w->root, 0, 0);
@@ -308,6 +317,23 @@ void w_transport_set_state(w_transport_t *w, bool is_playing, bool pending, bool
     w->is_playing          = is_playing;
     w->has_active_device = has_active_device;
 
+    /* The flag and state calls below are safe to make unconditionally --
+     * lv_obj_add_flag()/remove_flag()/add_state()/remove_state() all check
+     * whether the bit is already in the requested position and return
+     * immediately if so (confirmed by reading lv_obj.c directly), so a
+     * repeat call with an unchanged value costs a branch, not an
+     * invalidation.
+     *
+     * lv_obj_set_style_opa() below does NOT have that property, which is
+     * why `pending` is cached: it resolves to lv_obj_set_local_style_prop(),
+     * which unconditionally writes the property and calls
+     * lv_obj_refresh_style() (also confirmed directly, lv_obj_style.c) --
+     * and LV_STYLE_OPA on a container propagates to every descendant, so
+     * this one call invalidated and re-rendered the entire 480x80 transport
+     * row (the white circle plus both 9-pass stroke-overdrawn triangles).
+     * view_model_now_playing_apply_tick() calls this ~60x/second, and
+     * `pending` is false almost all of that time, so that was a full-row
+     * redraw every frame to re-apply the opacity it already had. */
     if (is_playing) {
         lv_obj_add_flag(w->play_triangle, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(w->pause_bar_l, LV_OBJ_FLAG_HIDDEN);
@@ -318,7 +344,10 @@ void w_transport_set_state(w_transport_t *w, bool is_playing, bool pending, bool
         lv_obj_add_flag(w->pause_bar_r, LV_OBJ_FLAG_HIDDEN);
     }
 
-    lv_obj_set_style_opa(w->root, pending ? LV_OPA_50 : LV_OPA_COVER, 0);
+    if (pending != w->pending) {
+        w->pending = pending;
+        lv_obj_set_style_opa(w->root, pending ? LV_OPA_50 : LV_OPA_COVER, 0);
+    }
     if (pending) {
         lv_obj_add_state(w->btn_prev, LV_STATE_DISABLED);
         lv_obj_add_state(w->btn_play_pause, LV_STATE_DISABLED);

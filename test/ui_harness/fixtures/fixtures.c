@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "denon_intent_types.h"
 #include "fixture_artwork_pixels.h"
 
 static const char *const FIXTURE_NAMES[UI_HARNESS_FIXTURE_COUNT] = {
@@ -104,7 +105,11 @@ static void set_denon_normal(core_state_t *state)
         .volume_half_db      = 96,   /* 48.0 dB -- denon_codec.h's 0..197 range, a
                                         * plausible mid-volume value; `ui` never
                                         * decodes this itself (plan §6) */
-        .input_id             = 1,
+        /* DENON_INPUT_NET (not the CD/other-input case) so the Receiver
+         * screen's Spotify card actually renders selected against every
+         * fixture below, each of which sets a real playback_state_t too --
+         * a more useful default demo state than "neither card selected". */
+        .input_id             = DENON_INPUT_NET,
         .listening_mode_id      = 0,
     };
     core_state_write(state, DOMAIN_DENON, LINK_STATUS_OK, &d, sizeof(d));

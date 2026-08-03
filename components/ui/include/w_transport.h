@@ -72,6 +72,15 @@ typedef struct {
     bool                        has_active_device;   /* now_playing_vm_t.has_active_device --
                                                         * see w_transport_set_state()'s own
                                                         * comment */
+    bool                        pending;             /* last applied pending value, so the
+                                                        * row-wide opacity style is only
+                                                        * written when it actually changes --
+                                                        * unlike LVGL's flag/state setters,
+                                                        * the style setter has no internal
+                                                        * no-op check and repainting this row
+                                                        * every tick is not free. See
+                                                        * w_transport_set_state()'s own
+                                                        * comment for the full finding. */
 } w_transport_t;
 
 lv_obj_t *w_transport_create(lv_obj_t *parent, w_transport_t *w, const w_transport_cfg_t *cfg);

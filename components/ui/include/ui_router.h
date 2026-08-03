@@ -1,5 +1,5 @@
 /*
- * ui_router -- the 3-peer screen pager and lifecycle dispatch
+ * ui_router -- the 4-peer screen pager and lifecycle dispatch
  * (UI_ARCHITECTURE.md §3).
  *
  * Art-forward redesign: the free-drag scroll-snap pager (Phase 5 Tier 4's
@@ -23,12 +23,15 @@
  * points), so a separate "which of 3 pages am I on" indicator is
  * redundant clutter under the new quiet aesthetic.
  *
- * Screen order is now fixed and never wraps: Receiver (UI_SCREEN_DENON,
- * leftmost) <- Now Playing (middle, default/boot screen) -> Browse
- * (UI_SCREEN_SETTINGS, rightmost) -- the design system's own naming and
- * ordering. Denon/Settings stay trivial placeholder screens (Phase 6
- * swaps in real content); only the shared page-edge-tab navigation
- * mechanism is new/real here.
+ * Screen order is fixed and never wraps: Receiver (UI_SCREEN_DENON,
+ * leftmost) <- Now Playing (middle-left, default/boot screen) ->
+ * Connection (UI_SCREEN_CONNECTION) -> System (UI_SCREEN_SYSTEM,
+ * rightmost). Phase 6 addendum: the original "Browse"/UI_SCREEN_SETTINGS
+ * placeholder is retired -- its real content turned out to be two
+ * screens' worth (Denon connection/latency/transport info, and overall
+ * panel health), not one, per the user's own split design. Denon/Now
+ * Playing's relative order and the boot default are unchanged from when
+ * this was written; only the two rightmost slots were replaced.
  *
  * Modal presentation (volume sheet, pickers, etc.) is NOT built here at
  * all -- deferred to Phase 6 with its first real caller, per the same
@@ -50,8 +53,9 @@ extern "C" {
 
 typedef enum {
     UI_SCREEN_DENON = 0,      /* "Receiver" per the design system's own naming -- leftmost */
-    UI_SCREEN_NOW_PLAYING,    /* middle, default/boot screen */
-    UI_SCREEN_SETTINGS,       /* "Browse" per the design system's own naming -- rightmost */
+    UI_SCREEN_NOW_PLAYING,    /* default/boot screen */
+    UI_SCREEN_CONNECTION,     /* Denon host/latency/transport + volume-cap slider */
+    UI_SCREEN_SYSTEM,         /* overall panel health -- rightmost */
     UI_SCREEN_COUNT,
 } ui_screen_id_t;
 
@@ -95,7 +99,7 @@ typedef struct {
                                                     * animation, never by touch-drag */
     w_page_edge_tab_t left_tab;                    /* Receiver-ward, hidden on the
                                                        leftmost screen */
-    w_page_edge_tab_t right_tab;                   /* Browse-ward, hidden on the
+    w_page_edge_tab_t right_tab;                   /* System-ward, hidden on the
                                                        rightmost screen */
 
     screen_if_t       screens[UI_SCREEN_COUNT];
@@ -105,9 +109,9 @@ typedef struct {
     ui_screen_id_t     active;
 } ui_router_t;
 
-/* Creates the pager container (3 x panel-width, horizontal, non-
+/* Creates the pager container (4 x panel-width, horizontal, non-
  * scrollable) and both page-edge tabs, and loads the pager as the active
- * LVGL screen. Call ui_router_register_screen() for each of the 3 ids
+ * LVGL screen. Call ui_router_register_screen() for each of the 4 ids
  * after this returns -- the router has nothing to show until at least one
  * screen is registered. */
 bool ui_router_create(ui_router_t *router, lv_display_t *disp);

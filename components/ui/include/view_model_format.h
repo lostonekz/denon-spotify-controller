@@ -35,6 +35,10 @@ void view_model_format_remaining_mmss(uint32_t elapsed_ms, uint32_t duration_ms,
  * percent_encode()/safe_strncpy() at similar boundaries. */
 void view_model_format_half_db(uint16_t half_db, char *buf, size_t buflen);
 
+/* "6 d 4 h" / "2 h 14 m" / "45 m" -- System screen's "Awake for". Always
+ * NUL-terminates, same contract as the other formatters here. */
+void view_model_format_uptime(uint32_t total_seconds, char *buf, size_t buflen);
+
 #ifdef __cplusplus
 }
 #endif

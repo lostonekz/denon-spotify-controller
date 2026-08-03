@@ -17,7 +17,6 @@
 #include <stdint.h>
 
 #include "esp_err.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -31,9 +30,15 @@
 #include "intent_submit_types.h"
 #include "lifecycle_types.h"
 #include "os_if_types.h"
+#include "screen_connection.h"
+#include "screen_denon.h"
 #include "screen_now_playing.h"
+#include "screen_system.h"
 #include "ui_router.h"
+#include "view_model_connection_apply.h"
+#include "view_model_denon_apply.h"
 #include "view_model_now_playing_apply.h"
+#include "view_model_system_apply.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,7 +70,10 @@ typedef struct {
     lv_indev_t                  *lv_touch_indev;
     artwork_pixel_provider_t       artwork_pixels;
 
-    esp_timer_handle_t     tick_timer;
+    /* No tick_timer field anymore -- LVGL pulls its millisecond clock from
+     * esp_timer_get_time() on demand via lv_tick_set_cb() instead of a 2ms
+     * periodic timer pushing lv_tick_inc() 500x/second. See ui_app.c's own
+     * lvgl_tick_get_cb() comment. */
 
     ui_router_t               router;
 
@@ -74,6 +82,20 @@ typedef struct {
                                                     (the WRAPPED provider, not cfg's raw one) */
     view_model_now_playing_apply_t   np_apply;    /* subscriptions + pending/ACK reconciliation --
                                                       driven once per loop iteration, below */
+
+    screen_denon_ctx_t          denon_screen;   /* Receiver screen's own widget instances +
+                                                    injected intent_submit_raw (cfg's raw
+                                                    provider directly -- no wrapped variant
+                                                    needed, see screen_denon.h's own comment) */
+    view_model_denon_apply_t      denon_apply;    /* subscriptions only, no pending/ACK state --
+                                                      driven once per loop iteration, below */
+
+    screen_connection_ctx_t         connection_screen;   /* injected intent_submit_raw, same
+                                                              reasoning as denon_screen's own */
+    view_model_connection_apply_t     connection_apply;
+
+    screen_system_ctx_t         system_screen;   /* fully read-only, no intent_submit at all */
+    view_model_system_apply_t     system_apply;
 
     TaskHandle_t         task_handle;
     volatile bool           task_should_stop;
@@ -97,9 +119,10 @@ typedef struct {
  * hal_display.h's own top comment has the real-hardware finding history
  * behind this, including a real double-buffered/full-frame diagnostic
  * that was tried and confirmed worse), a touch input device backed by
- * hal_touch's GT911 handle, the 2ms esp_timer LVGL tick, ui_router (Now
- * Playing real, Denon/Settings still stub), and the dedicated UI task
- * (core 1, prio 4, 12KB stack, ARCHITECTURE.md §4). */
+ * hal_touch's GT911 handle, LVGL's millisecond clock source (pulled from
+ * esp_timer on demand via lv_tick_set_cb()), ui_router (all 4 screens real:
+ * Now Playing, Denon/Receiver, Connection, System), and the dedicated UI
+ * task (core 1, prio 4, 12KB stack, ARCHITECTURE.md §4). */
 bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg);
 void ui_app_teardown(void *handle);
 

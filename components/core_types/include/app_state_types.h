@@ -71,8 +71,13 @@ typedef struct {
 typedef enum {
     SPOTIFY_SESSION_UNPAIRED = 0,
     SPOTIFY_SESSION_PAIRING,           /* collapses AWAITING_CODE + EXCHANGING_CODE */
-    SPOTIFY_SESSION_ACTIVE,            /* collapses AUTHORIZED + RESUMING + REFRESHING */
+    SPOTIFY_SESSION_ACTIVE,            /* collapses AUTHORIZED + RESUMING */
     SPOTIFY_SESSION_REAUTH_REQUIRED,
+    SPOTIFY_SESSION_REFRESHING,        /* System screen's "Renewing" -- a proactive token
+                                           refresh is in flight (spotify_session_fsm's own
+                                           REFRESHING state); set at action_start_refresh(),
+                                           cleared back to ACTIVE/REAUTH_REQUIRED by the same
+                                           real transitions that already run today */
 } spotify_session_summary_t;
 
 typedef struct {
@@ -143,6 +148,8 @@ typedef struct {
                                                            * change racing ahead of render. */
 } artwork_state_t;
 
+#define DENON_HOST_MAX 64   /* matches denon_service_state_t.host's own size */
+
 typedef struct {
     domain_meta_t meta;
     bool          power_on;
@@ -150,6 +157,20 @@ typedef struct {
     uint16_t      volume_half_db;   /* denon_codec.h representation */
     uint8_t       input_id;
     uint8_t       listening_mode_id;
+    char          host[DENON_HOST_MAX];       /* mirrors denon_service_state_t.host --
+                                                    svc_denon already owns this value (set via
+                                                    the TOPIC_SETTINGS relay), just never
+                                                    mirrored into core_state before the
+                                                    Connection screen needed to show it */
+    uint16_t      volume_limit_half_db;       /* mirrors denon_service_state_t.
+                                                    volume_limit_half_db -- so the Connection
+                                                    screen's cap slider can show/seed its
+                                                    current value */
+    uint32_t      round_trip_ms;              /* an honest approximation -- time from our last
+                                                    sent command to the next line received on
+                                                    this link, not per-command request/response
+                                                    correlation (the protocol has no request
+                                                    IDs). 0 until the first real measurement. */
 } denon_state_t;
 
 typedef struct {

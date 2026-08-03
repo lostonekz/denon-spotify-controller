@@ -168,7 +168,22 @@ static void do_resume_or_refresh(svc_spotify_t *s)
 }
 
 static void action_start_resume(void *ctx)  { do_resume_or_refresh((svc_spotify_t *)ctx); }
-static void action_start_refresh(void *ctx) { do_resume_or_refresh((svc_spotify_t *)ctx); }
+
+static void action_start_refresh(void *ctx)
+{
+    /* System screen's "Renewing" (Phase 6) -- distinct from plain ACTIVE
+     * only for the duration of a real proactive token refresh
+     * (SPOTIFY_RESUME_BACKOFF_US/schedule_proactive_refresh()'s own 80%-
+     * of-expiry timing). action_enter_authorized_resumed() below already
+     * sets ACTIVE again on success; the failure paths (action_report_
+     * refresh_failed_transient(), action_enter_reauth_required()) don't
+     * touch session_status themselves, so a failed refresh correctly
+     * leaves this showing REFRESHING until the next real transition --
+     * matches the pre-existing behavior for every other action here, none
+     * of which reset session_status on a merely-transient failure either. */
+    set_session_status((svc_spotify_t *)ctx, SPOTIFY_SESSION_REFRESHING);
+    do_resume_or_refresh((svc_spotify_t *)ctx);
+}
 
 static void action_enter_authorized_resumed(void *ctx)
 {

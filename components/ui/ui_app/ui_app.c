@@ -6,7 +6,6 @@
 #include "esp_timer.h"
 #include "freertos/idf_additions.h"
 
-#include "screen_stub.h"
 #include "ui_app_watchdog.h"
 
 static const char *TAG = "ui_app";
@@ -18,7 +17,6 @@ static const char *TAG = "ui_app";
                                                           reads it (DIAGNOSTICS_TICK_
                                                           PERIOD_US, app_wiring.c, 5s) */
 
-#define UI_APP_TICK_PERIOD_US    2000
 #define UI_APP_LOOP_MAX_DELAY_MS 16
 #define UI_APP_TASK_STACK_BYTES  (12 * 1024)   /* ARCHITECTURE.md §4: "ui", core 1, prio 4, 12KB */
 #define UI_APP_TASK_PRIO         4
@@ -33,17 +31,31 @@ static const char *TAG = "ui_app";
  * flush_cb calls to cover, not a correctness problem. PSRAM-backed --
  * this project's own established home for buffers of this kind. */
 #define UI_APP_DRAW_BUF_ROWS     40
-/* Denon/Settings stay trivial stub screens until Phase 6 -- the design
- * system's own THEME_COLOR_SURFACE/SURFACE_HIGH tokens (theme_colors.h,
- * Tier 6), matching Now Playing's own THEME_COLOR_BG so all three read as
- * one consistent surface family even before real content exists. */
-static const screen_stub_cfg_t s_stub_denon    = { .label = "Denon",    .bg_rgb888 = 0x141417 };
-static const screen_stub_cfg_t s_stub_settings = { .label = "Settings", .bg_rgb888 = 0x1F1F24 };
-
-static void lvgl_tick_cb(void *arg)
+/* LVGL pulls its own millisecond clock from esp_timer directly, instead of
+ * a 2ms periodic esp_timer calling lv_tick_inc() to push it.
+ *
+ * The old push arrangement cost 500 timer callbacks/second forever -- each
+ * one a real esp_timer-task wakeup, context switch, and dispatch, on a
+ * device whose whole R1 problem is contention for CPU and the PSRAM bus --
+ * purely to increment a counter LVGL only ever reads. lv_tick_set_cb()
+ * (managed_components/lvgl__lvgl/src/tick/lv_tick.c, present in this LVGL
+ * version) inverts that: lv_tick_get() calls this directly, on demand, from
+ * whatever code already wanted the time. Same 1ms resolution LVGL's own
+ * lv_tick_get() contract specifies, from a monotonic 64-bit microsecond
+ * source, and strictly more accurate than the old version -- lv_tick_inc()
+ * advanced in fixed 2ms steps regardless of real elapsed time, so any
+ * delayed or coalesced timer callback silently made LVGL's clock run slow
+ * (its animations and its LV_LABEL_LONG_MODE_SCROLL marquee both read it).
+ *
+ * The uint32_t truncation lv_tick_get_cb_t requires is LVGL's own
+ * documented contract, not a defect introduced here: it wraps every ~49.7
+ * days of uptime, and LVGL compares ticks exclusively through lv_tick_elaps()
+ * /lv_tick_diff(), whose unsigned subtraction is wrap-correct by construction
+ * (confirmed by reading lv_tick.c directly). lv_tick_inc() accumulated into
+ * the same uint32_t and wrapped identically. */
+static uint32_t lvgl_tick_get_cb(void)
 {
-    (void)arg;
-    lv_tick_inc(UI_APP_TICK_PERIOD_US / 1000);
+    return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
@@ -111,6 +123,9 @@ static void ui_app_task(void *arg)
          * subscriptions directly (never blocking, matching the same "zero
          * timeout" contract this step's name promises). */
         view_model_now_playing_apply_tick(&app->np_apply);
+        view_model_denon_apply_tick(&app->denon_apply);
+        view_model_connection_apply_tick(&app->connection_apply);
+        view_model_system_apply_tick(&app->system_apply);
 
         uint32_t next_ms = lv_timer_handler();
 
@@ -154,7 +169,6 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     app->artwork_pixels     = cfg->artwork_pixels;
     app->lv_disp             = NULL;
     app->lv_touch_indev     = NULL;
-    app->tick_timer          = NULL;
     app->task_handle        = NULL;
     app->task_should_stop  = false;
     app->stopped_sem         = NULL;
@@ -171,6 +185,12 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
      * already transparently backs with PSRAM once internal RAM is
      * exhausted -- lv_init() alone is enough. */
     lv_init();
+
+    /* Before anything that could read the clock (lv_display_create() onward
+     * builds real objects and can start timers). Cannot fail and owns no
+     * resource, so nothing in the fail path below or in ui_app_teardown()
+     * needs to undo it. */
+    lv_tick_set_cb(lvgl_tick_get_cb);
 
     app->lv_disp = lv_display_create(app->hal_disp->h_res, app->hal_disp->v_res);
     if (app->lv_disp == NULL) {
@@ -197,22 +217,6 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     lv_indev_set_read_cb(app->lv_touch_indev, touch_read_cb);
     lv_indev_set_display(app->lv_touch_indev, app->lv_disp);
     lv_indev_set_user_data(app->lv_touch_indev, app->hal_touch);
-
-    const esp_timer_create_args_t tick_args = {
-        .callback              = lvgl_tick_cb,
-        .arg                    = NULL,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name                  = "lvgl_tick",
-        .skip_unhandled_events = true,
-    };
-    if (esp_timer_create(&tick_args, &app->tick_timer) != ESP_OK) {
-        ESP_LOGE(TAG, "esp_timer_create failed");
-        goto fail;
-    }
-    if (esp_timer_start_periodic(app->tick_timer, UI_APP_TICK_PERIOD_US) != ESP_OK) {
-        ESP_LOGE(TAG, "esp_timer_start_periodic failed");
-        goto fail;
-    }
 
     if (!ui_router_create(&app->router, app->lv_disp)) {
         ESP_LOGE(TAG, "ui_router_create failed");
@@ -242,9 +246,19 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
      * incorrectly) dim the transport row on every volume drag. */
     app->np_screen.intent_submit_raw = cfg->intent_submit;
 
+    /* Every control on the Receiver/Connection screens submits Denon- or
+     * settings-domain intents with a near-instant round trip (w_power_row/
+     * w_power_glyph, w_volume_slider, w_volume_cap_slider) -- the same
+     * reasoning above for np_screen's own raw provider applies here too, so
+     * neither screen gets a wrapped variant at all (screen_denon.h's own
+     * comment). System is fully read-only, no intent_submit field at all. */
+    app->denon_screen.intent_submit_raw      = cfg->intent_submit;
+    app->connection_screen.intent_submit_raw = cfg->intent_submit;
+
     if (!ui_router_register_screen(&app->router, UI_SCREEN_NOW_PLAYING, screen_now_playing_get_interface(), &app->np_screen) ||
-        !ui_router_register_screen(&app->router, UI_SCREEN_DENON,       screen_stub_get_interface(), (void *)&s_stub_denon) ||
-        !ui_router_register_screen(&app->router, UI_SCREEN_SETTINGS,    screen_stub_get_interface(), (void *)&s_stub_settings)) {
+        !ui_router_register_screen(&app->router, UI_SCREEN_DENON,       screen_denon_get_interface(), &app->denon_screen) ||
+        !ui_router_register_screen(&app->router, UI_SCREEN_CONNECTION,  screen_connection_get_interface(), &app->connection_screen) ||
+        !ui_router_register_screen(&app->router, UI_SCREEN_SYSTEM,      screen_system_get_interface(), &app->system_screen)) {
         ESP_LOGE(TAG, "ui_router_register_screen failed");
         goto fail;
     }
@@ -252,6 +266,21 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     if (!view_model_now_playing_apply_init(&app->np_apply, cfg->state, cfg->bus, &app->router,
                                               &app->np_screen, cfg->intent_submit, cfg->clock)) {
         ESP_LOGE(TAG, "view_model_now_playing_apply_init failed");
+        goto fail;
+    }
+
+    if (!view_model_denon_apply_init(&app->denon_apply, cfg->state, cfg->bus, &app->router)) {
+        ESP_LOGE(TAG, "view_model_denon_apply_init failed");
+        goto fail;
+    }
+
+    if (!view_model_connection_apply_init(&app->connection_apply, cfg->state, cfg->bus, &app->router)) {
+        ESP_LOGE(TAG, "view_model_connection_apply_init failed");
+        goto fail;
+    }
+
+    if (!view_model_system_apply_init(&app->system_apply, cfg->state, cfg->bus, &app->router, cfg->clock)) {
+        ESP_LOGE(TAG, "view_model_system_apply_init failed");
         goto fail;
     }
 
@@ -289,11 +318,6 @@ fail:
         vSemaphoreDelete(app->stopped_sem);
         app->stopped_sem = NULL;
     }
-    if (app->tick_timer != NULL) {
-        esp_timer_stop(app->tick_timer);   /* harmless if never started */
-        esp_timer_delete(app->tick_timer);
-        app->tick_timer = NULL;
-    }
     if (app->lv_touch_indev != NULL) {
         lv_indev_delete(app->lv_touch_indev);
         app->lv_touch_indev = NULL;
@@ -317,11 +341,6 @@ void ui_app_teardown(void *handle)
          * task_should_stop -- same idiom as svc_denon's teardown. */
         xSemaphoreTake(app->stopped_sem, portMAX_DELAY);
         app->task_handle = NULL;
-    }
-    if (app->tick_timer != NULL) {
-        esp_timer_stop(app->tick_timer);
-        esp_timer_delete(app->tick_timer);
-        app->tick_timer = NULL;
     }
     if (app->stopped_sem != NULL) {
         vSemaphoreDelete(app->stopped_sem);

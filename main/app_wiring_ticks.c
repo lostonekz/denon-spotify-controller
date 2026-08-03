@@ -3,9 +3,12 @@
  */
 #include "app_wiring_ticks.h"
 
+#include <string.h>
+
 #include "esp_system.h"
 
 #include "app_wiring_volume.h"
+#include "settings_intent_types.h"
 
 void settings_tick_trampoline(void *ctx)    { svc_settings_tick((svc_settings_t *)ctx); }
 void diagnostics_tick_trampoline(void *ctx) { svc_diagnostics_report_tick((svc_diagnostics_t *)ctx); }
@@ -131,6 +134,22 @@ static void dispatch_one_intent(app_ctx_t *a, const intent_t *intent)
     case INTENT_DOMAIN_PLAYBACK:
         svc_spotify_submit_intent(&a->svc_spotify, intent);
         break;
+    case INTENT_DOMAIN_SETTINGS: {
+        /* The Connection screen's volume-cap slider is the first real
+         * submitter (INTENT_DOMAIN_SETTINGS existed as an enum value since
+         * Phase 1 but had no payload shape or dispatch case until now).
+         * app_wiring is app-layer and already links svc_settings directly
+         * (no svc->svc edge needed, unlike svc_denon's own settings reads)
+         * -- the existing TOPIC_SETTINGS -> svc_denon relay above picks up
+         * the resulting change from here automatically, so this is the
+         * only new wiring the write side needs. */
+        if ((settings_intent_kind_t)intent->kind == SETTINGS_INTENT_SET_VOLUME_LIMIT) {
+            settings_intent_payload_t payload;
+            memcpy(&payload, intent->payload, sizeof(payload));
+            settings_set_u8(&a->settings, SETTING_VOLUME_LIMIT_MAX, (uint8_t)payload.volume_limit_half_db);
+        }
+        break;
+    }
     case INTENT_DOMAIN_MULTI: {
         intent_t resolved = app_wiring_resolve_multi_intent(a, intent);
         if (resolved.domain != INTENT_DOMAIN_COUNT) {

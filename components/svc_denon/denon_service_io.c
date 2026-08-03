@@ -77,6 +77,16 @@ static void publish_and_write(svc_denon_t *d, denon_evt_kind_t kind)
     evt.u.denon.listening_mode_id = d->state.local_state.listening_mode_id;
     core_eventbus_publish(d->bus, &evt);
 
+    /* Connection screen (Phase 6): mirror three values svc_denon already
+     * owns privately into the denon_state_t actually written to core_state
+     * -- host and volume_limit_half_db were never exposed outside svc_denon
+     * at all before this; round_trip_ms is computed in denon_service_io_
+     * tick() itself, just carried through here alongside everything else
+     * that already gets written every publish. */
+    strncpy(d->state.local_state.host, d->state.host, sizeof(d->state.local_state.host) - 1);
+    d->state.local_state.host[sizeof(d->state.local_state.host) - 1] = '\0';
+    d->state.local_state.volume_limit_half_db = d->state.volume_limit_half_db;
+
     /* denon_link_fsm's CONNECTED_TELNET means OK (~20ms push), CONNECTED_HTTP
      * means STALE (up to ~2-10s poll cadence, see denon_http.h's KNOWN GAP
      * note) -- matches ADR-0003's "surfaced in diagnostics as HTTP
@@ -207,12 +217,19 @@ bool denon_service_io_tick(svc_denon_t *d)
          * verification actually see what half-dB value made it past the
          * safety clamp onto the wire. */
         ESP_LOGI(TAG, "sent: %s", cmd.cmd);
+        /* Round-trip latency (Connection screen, Phase 6) starts counting
+         * from here -- see denon_service_state.h's own comment on
+         * last_send_us/round_trip_pending for why this is an honest
+         * approximation, not per-command correlation. */
+        d->state.last_send_us       = now;
+        d->state.round_trip_pending = true;
     }
 
     char line[DENON_TRANSPORT_LINE_BUF_LEN];
     int64_t poll_start = d->clock.now_us(d->clock.ctx);
     denon_transport_poll_result_t pr = active->poll(active->ctx, line, sizeof(line), DENON_IO_POLL_TIMEOUT_MS);
-    int64_t poll_elapsed_ms = (d->clock.now_us(d->clock.ctx) - poll_start) / 1000;
+    int64_t recv_us          = d->clock.now_us(d->clock.ctx);
+    int64_t poll_elapsed_ms = (recv_us - poll_start) / 1000;
 
     if (pr == DENON_TRANSPORT_POLL_LOST) {
         dispatch_link_lost(d, s);
@@ -225,6 +242,10 @@ bool denon_service_io_tick(svc_denon_t *d)
          * reconnect that might otherwise be building toward. */
         d->state.next_status_poll_due_us         = now + DENON_STATUS_POLL_INTERVAL_US;
         d->state.consecutive_silent_poll_rounds = 0;
+        if (d->state.round_trip_pending) {
+            d->state.round_trip_pending          = false;
+            d->state.local_state.round_trip_ms = (uint32_t)((recv_us - d->state.last_send_us) / 1000);
+        }
         handle_line(d, line);
     }
 
