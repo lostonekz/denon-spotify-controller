@@ -105,7 +105,7 @@ static void test_verdict_positive_when_all_live(void)
     spotify_state_t spotify = make_spotify(SPOTIFY_SESSION_ACTIVE);
 
     system_vm_t vm = view_model_system_build(&net, &denon, &spotify, -48, "207b069", "Jul 30 2026", "A1B2C3", g_clock);
-    TEST_ASSERT_EQUAL_STRING("Everything's working", vm.verdict);
+    TEST_ASSERT_EQUAL_STRING("Everything is working", vm.verdict);
 }
 
 static void test_verdict_needs_attention_when_any_not_live(void)

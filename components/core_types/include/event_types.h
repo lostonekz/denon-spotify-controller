@@ -204,6 +204,15 @@ typedef enum {
     INTENT_ACK_EVT_ACCEPTED = 0,
     INTENT_ACK_EVT_REJECTED,
     INTENT_ACK_EVT_SUPERSEDED,
+    /* Distinct from REJECTED on purpose. Spotify answered us correctly
+     * and promptly -- it simply has no active device to run the command
+     * on (HTTP 404 `NO_ACTIVE_DEVICE`, or a 204 from the poll). Folding
+     * that into REJECTED forced the UI to show "Couldn't reach
+     * Spotify", which is false: Spotify was reached. Real hardware
+     * showed an AVR whose Spotify Connect session flaps in and out
+     * during normal playback, so this is a routine state a user will
+     * meet often, not an exceptional error. */
+    INTENT_ACK_EVT_NO_ACTIVE_DEVICE,
 } intent_ack_evt_kind_t;
 
 typedef struct {

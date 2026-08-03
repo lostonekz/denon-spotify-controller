@@ -41,6 +41,49 @@ bool core_pool_ring_pop(core_pool_ring_t *r, void *out)
     return true;
 }
 
+size_t core_pool_ring_push_bulk(core_pool_ring_t *r, const void *elems, size_t n)
+{
+    size_t free_slots = r->capacity - r->count;
+    if (n > free_slots) {
+        n = free_slots;
+    }
+    if (n == 0) {
+        return 0;
+    }
+
+    /* At most two memcpy()s: the run from head to the end of storage, then
+     * whatever wrapped around to the start. */
+    size_t first = r->capacity - r->head;
+    if (first > n) {
+        first = n;
+    }
+    memcpy(r->storage + (r->head * r->elem_size), elems, first * r->elem_size);
+    if (n > first) {
+        memcpy(r->storage, (const uint8_t *)elems + (first * r->elem_size),
+               (n - first) * r->elem_size);
+    }
+
+    r->head = (r->head + n) % r->capacity;
+    r->count += n;
+    if (r->count > r->max_count) {
+        r->max_count = r->count;
+    }
+    return n;
+}
+
+size_t core_pool_ring_discard(core_pool_ring_t *r, size_t n)
+{
+    if (n > r->count) {
+        n = r->count;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    r->tail = (r->tail + n) % r->capacity;
+    r->count -= n;
+    return n;
+}
+
 size_t core_pool_ring_count(const core_pool_ring_t *r)
 {
     return r->count;

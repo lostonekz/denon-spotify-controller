@@ -37,6 +37,14 @@ typedef struct {
     lv_obj_t          *switch_track;
     lv_obj_t          *switch_knob;
     w_power_glyph_t   glyph;
+    /* Last applied (power_on, tone) pair -- the track colour and knob
+     * alignment derive from exactly these two, so caching them lets a
+     * per-tick call with unchanged state skip the whole block. `applied`
+     * starts false so the first call always writes. See
+     * w_power_row_set_state(). */
+    bool                applied;
+    bool                applied_power_on;
+    tone_t              applied_tone;
 } w_power_row_t;
 
 lv_obj_t *w_power_row_create(lv_obj_t *parent, w_power_row_t *w, const w_power_row_cfg_t *cfg);

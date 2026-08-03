@@ -32,6 +32,10 @@ void                            spotify_service_session_drive(svc_spotify_t *s);
 
 /* One tick's worth of ctrl_queue draining + playback-intent draining +
  * poll scheduling (poll/force-poll/backoff). */
+/* Drained by spotify_service_tick() at the top of each iteration.
+ * Lives in spotify_service_ctrl.c -- see that file's own comment. */
+void spotify_service_handle_ctrl_cmd(svc_spotify_t *s, const spotify_ctrl_cmd_t *cmd);
+
 void spotify_service_tick(svc_spotify_t *s);
 
 /* spotify_service_task.c -- task entry point. */

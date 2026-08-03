@@ -199,6 +199,15 @@ deliberate departure from this doc's original "Balanced" card-layout description
 real, still-open follow-up (the art card's corners are square, not the intended rounded, due
 to a real LVGL rendering bug, not a design change).
 
+**Two of those exceptions were later closed, one wasn't.** Real drag-to-seek was built end
+to end after live feedback asked for it (`PLAYBACK_INTENT_SEEK` + `spotify_api.c`'s
+`PUT .../seek` — the "no SEEK endpoint exists" note above was a scope decision, not a
+platform limit), and the volume badge became a real live-dragging slider rather than a
+read-only badge. The heart/favorite control stays cut: no save endpoint exists to wire it to.
+Also removed since: the per-track dynamic accent, whose only two consumers (the scrub bar's
+fill, the scrim's contrast logic) the Art-forward redesign deleted — `artwork_palette.c`
+still computes and publishes it, nothing in the UI reads it (UI_ARCHITECTURE.md §5.2).
+
 This phase also absorbed real hardware bring-up work that Phase 0's own bullet list never
 named (`bsp_board`/`hal_display`/`hal_touch`) — a deliberate scope decision (Phase 0's own
 bring-up was explicitly throwaway, fully removed before Phase 1), not a gap. That bring-up
@@ -219,6 +228,35 @@ invisible to any simulator or spike test. Full account in [RISKS.md](RISKS.md) R
 
 **Exit criteria:** no unstyled screens, no instant backlight steps, no dead-end states.
 
+**Screens: done. The rest of the phase: not started.**
+
+Three real screens shipped, replacing both stubs — the pager is now four screens
+(Receiver ← Now Playing → Connection → System), and `screen_stub.c` is deleted outright
+since nothing uses it any more. Layouts and the real mechanisms behind them are in
+[UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §6b/§6c; two things worth naming here:
+
+- **"Settings" became two screens, not one.** Connection (receiver host/IP, round-trip
+  latency, telnet-vs-HTTP transport, an adjustable volume safety cap) and System (Wi-Fi/
+  receiver/Spotify health, firmware, uptime, panel identifier). A single settings list was
+  the original plan; the real content divided cleanly in two.
+- **The volume cap is the first control that writes a *setting*.** `INTENT_DOMAIN_SETTINGS`
+  had been a declared-but-dead enum value since Phase 1 — no payload shape, no dispatch case
+  anywhere. It's now a real end-to-end path (UI_ARCHITECTURE.md §4b), reusing the existing
+  `TOPIC_SETTINGS → svc_denon` relay rather than adding a second one.
+
+Three small pieces of real instrumentation came with them, none of which existed before:
+Denon round-trip latency (an honest "time since our last send" approximation — the protocol
+has no request IDs), Wi-Fi RSSI (the `net_state_t` field existed but nothing ever wrote it),
+and a distinct `SPOTIFY_SESSION_REFRESHING` state, previously collapsed into "Connected".
+
+**Still open in this phase:** modals and pickers (no modal infrastructure is built at all),
+provisioning and re-pair screens, the motion pass, `svc_power`, and `svc_input`. Verified:
+62/62 host tests, 11/11 gates, confirmed live on real hardware — including two regressions
+that only appeared after flashing (a screen confidently reporting "the receiver is off"
+during the seconds before `svc_denon` first connects, and an eventbus subscriber array that
+was exactly full, so the new screens' subscriptions failed and took the whole boot down in a
+reboot loop).
+
 ---
 
 ## Phase 7 — Hardening and soak
@@ -232,7 +270,7 @@ invisible to any simulator or spike test. Full account in [RISKS.md](RISKS.md) R
 | WiFi AP powered off mid-playback | `DEGRADED`, stale content retained, auto-reconnect |
 | AVR rebooted | link re-established, state re-synced, no stuck UI |
 | Telnet socket stolen by another client | falls back to HTTP, promotes back within 60 s |
-| Spotify token revoked | `REAUTH_REQUIRED` reported (`spotify status` until Phase 6 has a screen), re-pair via `spotify pair`/`spotify code`, no crash, no rollback |
+| Spotify token revoked | surfaced on the System screen as "Reauth needed" (and via `spotify status`), re-pair via `spotify pair`/`spotify code`, no crash, no rollback |
 | Spotify returns 429 sustained | backoff honoured, UI stays responsive |
 | SPIFFS corrupted | erased and rebuilt, artwork re-fetched |
 | Power cut mid-NVS-write | settings intact or defaulted, never garbage |
@@ -275,8 +313,6 @@ require restructuring.
 - Non-Spotify sources via AirPlay or the AVR's own now-playing metadata, so the screen stays
   useful when Spotify isn't the source
 - Lyrics (time-synced) on the Now Playing screen
-- Spotify seek/scrub — no SEEK intent kind or endpoint exists today (§1.3); `w_progress_bar`
-  is display-only pending this
 - Track favoriting — no save/favorite endpoint exists today; the heart control was cut from
   `w_transport` entirely rather than shipped as a dead tap target (Phase 5)
 - A fast pre-decode artwork palette/accent path — today's accent color and pale-cover scrim

@@ -223,9 +223,9 @@ Core 1 belongs to the UI. Core 0 hosts WiFi and every network service.
 | Task | Core | Prio | Stack | Cadence | Blocking allowed? |
 |---|---|---|---|---|---|
 | `ui` | 1 | 4 | 12 KB | `lv_timer_handler()` loop, ~16 ms | **Never** > 2 ms |
-| `lvgl_tick` | — | — | — | `esp_timer`, 2 ms | ISR context |
 | `net_sup` | 0 | 6 | 4 KB | event-driven | yes |
 | `denon` | 0 | 5 | 6 KB | socket select + cmd queue | yes |
+| `intent` | 0 | 5 | 3 KB | blocks on the intent queue | yes (queue send only) |
 | `spotify` | 0 | 5 | 12 KB | adaptive 1–30 s | yes |
 | `artwork` | 0 | 3 | 6 KB | on track change | yes (long) |
 | `sched` | 0 | 2 | 4 KB | periodic jobs | yes |
@@ -234,6 +234,15 @@ Core 1 belongs to the UI. Core 0 hosts WiFi and every network service.
 
 Notes that matter:
 
+- **`lvgl_tick` is gone.** It was a 2 ms periodic `esp_timer` whose only job was calling
+  `lv_tick_inc()` — 500 timer callbacks a second to advance a counter LVGL only ever reads.
+  `ui_app.c` now hands LVGL a `lv_tick_set_cb()` callback that returns
+  `esp_timer_get_time() / 1000` on demand instead, which is also strictly more accurate: the
+  old push advanced in fixed 2 ms steps regardless of real elapsed time, so a delayed or
+  coalesced callback silently made LVGL's clock run slow.
+- **`intent` blocks on the queue rather than being polled.** It replaced a 20 ms periodic
+  `sched` job that woke 50 times a second to find an empty queue on almost every one. Priority
+  5 matches the two services it hands intents to, so a tap doesn't pay an extra scheduling hop.
 - **The UI task never calls anything that can block.** No sockets, no NVS, no I²C beyond
   the touch read, no `vTaskDelay` other than the LVGL loop's own. It drains its inbound
   event queue with a **zero timeout** at the top of each iteration, then renders.

@@ -28,6 +28,8 @@ idf_component_register(
                   "spotify_service.c"
                   "spotify_service_session.c"
                   "spotify_service_task.c"
+                  "spotify_service_ctrl.c"
+                  "spotify_service_lifecycle.c"
     INCLUDE_DIRS  "include"
     REQUIRES      "core_fsm" "core_types" "core_eventbus" "core_state" "net_http" "net_time" "json"
     PRIV_REQUIRES "mbedtls"

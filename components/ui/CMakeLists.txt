@@ -59,7 +59,14 @@ idf_component_register(
                   "ui_app/ui_app.c"
                   "ui_app/ui_app_watchdog.c"
     INCLUDE_DIRS  "include"
+    # esp_app_format is PUBLIC, not private, unlike every other IDF dependency
+    # here: view_model_system_apply.h caches the esp_app_desc_t pointer in its
+    # own struct (read once at init rather than on every tick), so
+    # esp_app_desc.h is included from a PUBLIC header -- and ui_app.h pulls
+    # that in, which main/app_ctx.h in turn pulls in. A private requirement
+    # would compile this component fine and then fail every consumer.
     REQUIRES      "core_types" "lvgl" "hal_display" "hal_touch" "core_state" "core_eventbus"
+                  "esp_app_format"
     PRIV_REQUIRES "esp_lcd" "esp_lcd_touch" "heap" "app_update" "esp_wifi" "esp_hw_support"
 )
 

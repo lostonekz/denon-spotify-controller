@@ -68,6 +68,13 @@ typedef struct {
                                                        always the last real state pushed via
                                                        w_power_glyph_set_state(), never
                                                        optimistically written by the tap itself */
+    /* Last applied (power_on, tone) pair, purely a render cache -- kept
+     * separate from last_power_on above, which is behavioural (the tap
+     * handler reads it) and so must be updated even on a no-op render.
+     * `applied` starts false so the first call always writes. */
+    bool                        applied;
+    bool                        applied_power_on;
+    tone_t                      applied_tone;
 } w_power_glyph_t;
 
 lv_obj_t *w_power_glyph_create(lv_obj_t *parent, w_power_glyph_t *w, const w_power_glyph_cfg_t *cfg);

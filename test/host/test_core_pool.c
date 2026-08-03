@@ -274,6 +274,84 @@ static void test_ring_max_count_is_high_water(void)
     TEST_ASSERT_EQUAL_UINT(2, core_pool_ring_max_count(&r));
 }
 
+/* ---- core_pool_ring bulk primitives (svc_logging's per-line writes) ---- */
+
+static void test_ring_push_bulk_fills_only_what_fits(void)
+{
+    uint8_t          storage[4];
+    core_pool_ring_t r;
+    core_pool_ring_init(&r, storage, 1, 4);
+
+    /* 6 offered into a capacity of 4: exactly 4 taken, oldest data never
+     * silently overwritten -- push_bulk is policy-free (core_pool_ring.h). */
+    TEST_ASSERT_EQUAL_UINT(4, core_pool_ring_push_bulk(&r, "ABCDEF", 6));
+    TEST_ASSERT_EQUAL_UINT(4, core_pool_ring_count(&r));
+    TEST_ASSERT_EQUAL_UINT(0, core_pool_ring_push_bulk(&r, "X", 1));
+
+    uint8_t out;
+    for (const char *expect = "ABCD"; *expect != '\0'; expect++) {
+        TEST_ASSERT_TRUE(core_pool_ring_pop(&r, &out));
+        TEST_ASSERT_EQUAL_UINT8((uint8_t)*expect, out);
+    }
+}
+
+static void test_ring_push_bulk_wraps_around_storage_end(void)
+{
+    uint8_t          storage[4];
+    core_pool_ring_t r;
+    core_pool_ring_init(&r, storage, 1, 4);
+
+    /* Advance head to 3, leaving a 1-byte run to the end of storage so the
+     * next bulk push must split into two memcpy()s. */
+    core_pool_ring_push_bulk(&r, "abc", 3);
+    core_pool_ring_discard(&r, 3);
+    TEST_ASSERT_EQUAL_UINT(0, core_pool_ring_count(&r));
+
+    TEST_ASSERT_EQUAL_UINT(3, core_pool_ring_push_bulk(&r, "XYZ", 3));
+    uint8_t out;
+    for (const char *expect = "XYZ"; *expect != '\0'; expect++) {
+        TEST_ASSERT_TRUE(core_pool_ring_pop(&r, &out));
+        TEST_ASSERT_EQUAL_UINT8((uint8_t)*expect, out);
+    }
+}
+
+static void test_ring_discard_drops_oldest_and_clamps(void)
+{
+    uint8_t          storage[4];
+    core_pool_ring_t r;
+    core_pool_ring_init(&r, storage, 1, 4);
+
+    core_pool_ring_push_bulk(&r, "ABCD", 4);
+    TEST_ASSERT_EQUAL_UINT(2, core_pool_ring_discard(&r, 2));
+
+    uint8_t out;
+    TEST_ASSERT_TRUE(core_pool_ring_pop(&r, &out));
+    TEST_ASSERT_EQUAL_UINT8('C', out);   /* A and B were the ones dropped */
+
+    /* Asking for more than is held drops what there is and reports that. */
+    TEST_ASSERT_EQUAL_UINT(1, core_pool_ring_discard(&r, 99));
+    TEST_ASSERT_TRUE(core_pool_ring_is_empty(&r));
+    TEST_ASSERT_EQUAL_UINT(0, core_pool_ring_discard(&r, 1));
+}
+
+static void test_ring_push_bulk_preserves_multi_byte_elements(void)
+{
+    /* elem_size > 1: the byte-ring case svc_logging uses must not be the
+     * only one that works -- core_eventbus rings hold whole event_t. */
+    uint32_t         storage[4];
+    core_pool_ring_t r;
+    core_pool_ring_init(&r, (uint8_t *)storage, sizeof(uint32_t), 4);
+
+    const uint32_t in[3] = { 111u, 222u, 333u };
+    TEST_ASSERT_EQUAL_UINT(3, core_pool_ring_push_bulk(&r, in, 3));
+
+    uint32_t out = 0;
+    for (int i = 0; i < 3; i++) {
+        TEST_ASSERT_TRUE(core_pool_ring_pop(&r, &out));
+        TEST_ASSERT_EQUAL_UINT32(in[i], out);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -291,5 +369,9 @@ int main(void)
     RUN_TEST(test_ring_wraps_around_after_pop_push_cycles);
     RUN_TEST(test_ring_empty_pop_fails_without_touching_out);
     RUN_TEST(test_ring_max_count_is_high_water);
+    RUN_TEST(test_ring_push_bulk_fills_only_what_fits);
+    RUN_TEST(test_ring_push_bulk_wraps_around_storage_end);
+    RUN_TEST(test_ring_discard_drops_oldest_and_clamps);
+    RUN_TEST(test_ring_push_bulk_preserves_multi_byte_elements);
     return UNITY_END();
 }

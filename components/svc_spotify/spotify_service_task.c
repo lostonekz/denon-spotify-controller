@@ -1,7 +1,10 @@
 /*
- * ctrl_queue/playback-intent draining, poll scheduling, the "spotify" task
- * entry point, teardown, restart, and the service descriptor. Target-only
- * -- see spotify_service.h's top comment.
+ * ctrl_queue/playback-intent draining, poll scheduling, and the "spotify"
+ * task entry point. Target-only -- see spotify_service.h's top comment.
+ *
+ * Teardown, restart, the session-close request and the service descriptor
+ * live in spotify_service_lifecycle.c -- split out purely for the 400-line
+ * gate, along the seam this file's own comment already described.
  */
 #include "svc_spotify_internal.h"
 
@@ -15,18 +18,13 @@
 
 static const char *TAG = "svc_spotify";
 
-/* strncpy() does not null-terminate when src is exactly dst_cap-1 bytes or
- * longer -- guaranteed to happen for Spotify's client_id, a fixed 32-hex-char
- * string that exactly fills SPOTIFY_CLIENT_ID_MAX-1. See spotify_service.c's
- * copy of this same helper for the real-hardware bug this fixes. */
-static void safe_strncpy(char *dst, const char *src, size_t dst_cap)
-{
-    if (dst_cap == 0) {
-        return;
-    }
-    strncpy(dst, src, dst_cap - 1);
-    dst[dst_cap - 1] = '\0';
-}
+
+/* Upper bound on how long playback commands are answered locally after
+ * Spotify reports no active device. Deliberately generous relative to
+ * the 5s poll: the poll clears this the moment a device reappears
+ * (handle_poll_result), so in practice the suppression ends on the next
+ * poll, and this only bounds the case where polling itself is struggling. */
+#define SPOTIFY_NO_DEVICE_SUPPRESS_US ((int64_t)10 * 1000 * 1000)
 
 #define SPOTIFY_TASK_IDLE_DELAY_MS 100u   /* Tier -1's own busy-spin fix, applied from the
                                              * start here rather than discovered later --
@@ -34,91 +32,7 @@ static void safe_strncpy(char *dst, const char *src, size_t dst_cap)
                                              * way Denon's does, so every idle iteration
                                              * needs an explicit sleep. */
 
-static bool time_is_synced(svc_spotify_t *s)
-{
-    return s->time != NULL && s->time->synced;
-}
 
-static void handle_ctrl_cmd(svc_spotify_t *s, const spotify_ctrl_cmd_t *cmd)
-{
-    switch (cmd->kind) {
-    case SPOTIFY_CTRL_CMD_PAIR:
-        spotify_session_fsm_dispatch(&s->state.session_fsm, SPOTIFY_SESSION_EVT_PAIR_REQUESTED, NULL);
-        break;
-
-    case SPOTIFY_CTRL_CMD_CODE_PASTED:
-        if (!time_is_synced(s)) {
-            ESP_LOGW(TAG, "code paste ignored: clock not yet synced, retry shortly");
-            break;
-        }
-        safe_strncpy(s->state.pending_code, cmd->arg, sizeof(s->state.pending_code));
-        spotify_session_fsm_dispatch(&s->state.session_fsm, SPOTIFY_SESSION_EVT_CODE_PASTED, NULL);
-        break;
-
-    case SPOTIFY_CTRL_CMD_UNPAIR:
-        spotify_session_fsm_dispatch(&s->state.session_fsm, SPOTIFY_SESSION_EVT_UNPAIR_REQUESTED, NULL);
-        break;
-
-    case SPOTIFY_CTRL_CMD_SET_CLIENT_ID:
-        xSemaphoreTake(s->session_lock, portMAX_DELAY);
-        safe_strncpy(s->state.client_id, cmd->arg, sizeof(s->state.client_id));
-        xSemaphoreGive(s->session_lock);
-        if (!spotify_client_id_save(s->secure_kv, cmd->arg)) {
-            ESP_LOGE(TAG, "failed to persist client_id");
-        }
-        break;
-
-    case SPOTIFY_CTRL_CMD_SET_REDIRECT_URI:
-        xSemaphoreTake(s->session_lock, portMAX_DELAY);
-        safe_strncpy(s->state.redirect_uri, cmd->arg, sizeof(s->state.redirect_uri));
-        xSemaphoreGive(s->session_lock);
-        if (!spotify_redirect_uri_save(s->secure_kv, cmd->arg)) {
-            ESP_LOGE(TAG, "failed to persist redirect_uri");
-        }
-        break;
-
-    case SPOTIFY_CTRL_CMD_SET_AVR_DEVICE: {
-        spotify_avr_pin_t pin = { 0 };
-        safe_strncpy(pin.avr_device_id, cmd->arg, sizeof(pin.avr_device_id));
-
-        xSemaphoreTake(s->session_lock, portMAX_DELAY);
-        for (size_t i = 0; i < s->state.last_devices.count; i++) {
-            if (strcmp(s->state.last_devices.devices[i].device_id, cmd->arg) == 0) {
-                safe_strncpy(pin.avr_name, s->state.last_devices.devices[i].device_name, sizeof(pin.avr_name));
-                break;
-            }
-        }
-        s->state.avr_pin = pin;
-        xSemaphoreGive(s->session_lock);
-
-        if (!spotify_avr_pin_save(s->secure_kv, &pin)) {
-            ESP_LOGE(TAG, "failed to persist AVR pin");
-        }
-        break;
-    }
-
-    case SPOTIFY_CTRL_CMD_CLEAR_AVR_DEVICE:
-        xSemaphoreTake(s->session_lock, portMAX_DELAY);
-        memset(&s->state.avr_pin, 0, sizeof(s->state.avr_pin));
-        xSemaphoreGive(s->session_lock);
-        spotify_avr_pin_clear(s->secure_kv);
-        break;
-
-    case SPOTIFY_CTRL_CMD_REFRESH_DEVICE_LIST: {
-        if (spotify_session_fsm_current_state(&s->state.session_fsm) != SPOTIFY_SESSION_FSM_STATE_AUTHORIZED) {
-            break;   /* no access token to call with */
-        }
-        spotify_device_list_t list = { 0 };
-        spotify_api_result_t r = spotify_api_get_devices(s->http, &s->http_policy, s->state.access_token, &list);
-        if (r == SPOTIFY_API_RESULT_OK) {
-            xSemaphoreTake(s->session_lock, portMAX_DELAY);
-            s->state.last_devices = list;
-            xSemaphoreGive(s->session_lock);
-        }
-        break;
-    }
-    }
-}
 
 /* Phase 5 Tier -1: closes a real gap -- Phase 4's own plan called for
  * svc_spotify to publish TOPIC_INTENT_ACK, but a repo-wide search found the
@@ -162,6 +76,9 @@ static void handle_resume_on_avr_intent(svc_spotify_t *s, const intent_t *intent
          * clean, real rejection, not a network failure, but surfaced the
          * same way (REJECTED ack -> toast) since there's nothing more
          * specific the existing ack machinery can say. */
+        ESP_LOGW(TAG, "intent seq=%u rejected: no AVR device pinned "
+                       "(run `spotify set-avr-device`) -- nothing to resume playback on",
+                  (unsigned)intent->seq);
         publish_intent_ack(s, intent->seq, INTENT_ACK_EVT_REJECTED);
         return;
     }
@@ -171,12 +88,36 @@ static void handle_resume_on_avr_intent(svc_spotify_t *s, const intent_t *intent
     if (r == SPOTIFY_API_RESULT_UNAUTHORIZED) {
         s->state.access_token_refresh_due_us = s->clock.now_us(s->clock.ctx);
     }
+    if (r != SPOTIFY_API_RESULT_OK) {
+        ESP_LOGW(TAG, "intent seq=%u: transfer_playback result=%d", (unsigned)intent->seq, (int)r);
+    }
     publish_intent_ack(s, intent->seq, spotify_intent_ack_kind_for_result(r));
     bump_force_poll(s);
 }
 
 static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
 {
+    /* Answer locally while we know there is nothing to command. Every
+     * send here costs a full TLS handshake (a fresh connection per
+     * request), and the rejection is exactly what prompts the user to
+     * press again -- measured on real hardware as six handshakes in ~11s
+     * driving free internal RAM down to 891 bytes. The ack is identical
+     * to the one the network round trip would have produced, so the UI
+     * behaves the same; it just arrives instantly and for free.
+     *
+     * RESUME_ON_AVR is deliberately NOT suppressed: it is the one command
+     * whose entire purpose is to CREATE an active device, so blocking it
+     * would make this state unrecoverable from the panel. */
+    if (!(intent->domain == INTENT_DOMAIN_PLAYBACK &&
+          (playback_intent_kind_t)intent->kind == PLAYBACK_INTENT_RESUME_ON_AVR) &&
+        s->no_device_suppress_until_us != 0 &&
+        s->clock.now_us(s->clock.ctx) < s->no_device_suppress_until_us) {
+        ESP_LOGD(TAG, "intent seq=%u answered locally: no active device (suppressed)",
+                  (unsigned)intent->seq);
+        publish_intent_ack(s, intent->seq, INTENT_ACK_EVT_NO_ACTIVE_DEVICE);
+        return;
+    }
+
     if (intent->domain == INTENT_DOMAIN_PLAYBACK &&
         (playback_intent_kind_t)intent->kind == PLAYBACK_INTENT_RESUME_ON_AVR) {
         handle_resume_on_avr_intent(s, intent);
@@ -185,6 +126,12 @@ static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
 
     spotify_api_cmd_t cmd;
     if (spotify_intent_to_cmd(intent, &cmd) != SPOTIFY_INTENT_RESULT_OK) {
+        /* Same silent-toast gap as the two other rejection paths in this
+         * file: an intent kind this translator has no mapping for is a
+         * build-time wiring mistake, not a network problem, and should not
+         * be indistinguishable from one in the log. */
+        ESP_LOGW(TAG, "intent seq=%u rejected: no cmd mapping (domain=%d kind=%d)",
+                  (unsigned)intent->seq, (int)intent->domain, (int)intent->kind);
         publish_intent_ack(s, intent->seq, INTENT_ACK_EVT_REJECTED);
         return;
     }
@@ -192,6 +139,37 @@ static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
     spotify_api_result_t r = spotify_api_execute_cmd(s->http, &s->http_policy, s->state.access_token, &cmd);
     if (r == SPOTIFY_API_RESULT_UNAUTHORIZED) {
         s->state.access_token_refresh_due_us = s->clock.now_us(s->clock.ctx);   /* force a refresh now */
+    }
+    if (r == SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE) {
+        /* Arm the local-answer window; the poll clears it as soon as a
+         * device is visible again. */
+        s->no_device_suppress_until_us =
+            s->clock.now_us(s->clock.ctx) + SPOTIFY_NO_DEVICE_SUPPRESS_US;
+        ESP_LOGW(TAG, "intent seq=%u: no active device -- suppressing further "
+                       "commands for up to %ds to avoid a TLS handshake storm",
+                  (unsigned)intent->seq, (int)(SPOTIFY_NO_DEVICE_SUPPRESS_US / 1000000));
+    } else if (r == SPOTIFY_API_RESULT_OK) {
+        s->no_device_suppress_until_us = 0;
+    }
+    if (r != SPOTIFY_API_RESULT_OK) {
+        /* Dump what the last successful poll believed about the target
+         * device alongside the failure. A 404 from a player-command
+         * endpoint is Spotify's "no active device", but that is a claim
+         * about Spotify's own view, which can disagree with what is
+         * audibly playing in the room -- e.g. a device playing via the
+         * receiver's own HEOS/Spotify integration rather than as a
+         * Connect target this token can command, or one flagged
+         * is_restricted (DeviceObject.is_restricted, app_state_types.h:
+         * "the Web API cannot control this device at all"). Without these
+         * fields the log cannot distinguish those cases from each other. */
+        playback_state_t dbg = { 0 };
+        core_state_read(s->state_store, DOMAIN_PLAYBACK, &dbg, sizeof(dbg));
+        ESP_LOGW(TAG, "intent seq=%u: execute_cmd result=%d | device id='%s' name='%s' "
+                       "is_avr=%d restricted=%d supports_vol=%d playing=%d",
+                  (unsigned)intent->seq, (int)r,
+                  dbg.device_id, dbg.device_name, (int)dbg.device_is_avr,
+                  (int)dbg.device_is_restricted, (int)dbg.device_supports_volume,
+                  (int)dbg.is_playing);
     }
     publish_intent_ack(s, intent->seq, spotify_intent_ack_kind_for_result(r));
     bump_force_poll(s);
@@ -222,6 +200,27 @@ static void handle_poll_result(svc_spotify_t *s, spotify_api_result_t r, const p
         return;
     }
     s->state.consecutive_poll_errors = 0;
+
+    /* Log only when the answer CHANGES -- a poll runs every 5s, so
+     * logging each one would drown the console, but the edges are the
+     * whole story: the exact poll at which Spotify stops seeing an
+     * active device is what turns "it randomly stops working" into a
+     * timestamp that can be lined up against whatever preceded it. */
+    bool has_device = (r != SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE);
+    if (!s->poll_ever_reported || has_device != s->poll_had_device) {
+        s->poll_ever_reported = true;
+        s->poll_had_device    = has_device;
+        if (has_device) {
+            /* A device is back -- lift any command suppression immediately
+             * rather than making the user wait out the window. */
+            s->no_device_suppress_until_us = 0;
+            ESP_LOGW(TAG, "poll: device APPEARED name='%s' id='%s' playing=%d restricted=%d",
+                      pb->device_name, pb->device_id, (int)pb->is_playing,
+                      (int)pb->device_is_restricted);
+        } else {
+            ESP_LOGW(TAG, "poll: device DISAPPEARED (Spotify reports no active device)");
+        }
+    }
 
     if (r == SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE) {
         playback_state_t empty = { .device_is_avr = DEVICE_IS_AVR_UNKNOWN };
@@ -280,7 +279,7 @@ void spotify_service_tick(svc_spotify_t *s)
 {
     spotify_ctrl_cmd_t cmd;
     while (xQueueReceive(s->ctrl_queue, &cmd, 0) == pdTRUE) {
-        handle_ctrl_cmd(s, &cmd);
+        spotify_service_handle_ctrl_cmd(s, &cmd);
     }
 
     if (spotify_session_fsm_current_state(&s->state.session_fsm) != SPOTIFY_SESSION_FSM_STATE_AUTHORIZED) {
@@ -290,6 +289,14 @@ void spotify_service_tick(svc_spotify_t *s)
          * used to be left entirely untouched here. */
         intent_t stuck;
         while (xQueueReceive(s->playback_intent_queue, &stuck, 0) == pdTRUE) {
+            /* Logged, not silent: this rejection reaches the user as the
+             * "Couldn't reach Spotify" toast, and until now left no trace at
+             * all -- the session simply not being AUTHORIZED is a completely
+             * different problem from a failed network call, but both looked
+             * identical from the outside. */
+            ESP_LOGW(TAG, "intent seq=%u rejected: session not AUTHORIZED (fsm state %d)",
+                      (unsigned)stuck.seq,
+                      (int)spotify_session_fsm_current_state(&s->state.session_fsm));
             publish_intent_ack(s, stuck.seq, INTENT_ACK_EVT_REJECTED);
         }
         return;   /* nothing else below needs a valid access token */
@@ -308,7 +315,8 @@ void spotify_service_tick(svc_spotify_t *s)
     }
     if (due) {
         playback_state_t pb = { 0 };
-        spotify_api_result_t r = spotify_api_get_player_state(s->http, &s->http_policy, s->state.access_token, &pb);
+        spotify_api_result_t r = spotify_api_get_player_state(s->http, &s->http_policy, s->state.access_token,
+                                                                   s->resp_buf, SPOTIFY_RESPONSE_BUF_BYTES, &pb);
         handle_poll_result(s, r, &pb);
 
         if (s->state.force_poll_index >= 0) {
@@ -330,63 +338,4 @@ void spotify_service_task(void *pv)
     }
     xSemaphoreGive(s->stopped_sem);
     vTaskDelete(NULL);
-}
-
-void svc_spotify_teardown(void *handle)
-{
-    svc_spotify_t *s = (svc_spotify_t *)handle;
-
-    if (s->task_handle != NULL) {
-        s->task_should_stop = true;
-        xSemaphoreTake(s->stopped_sem, portMAX_DELAY);
-        s->task_handle = NULL;
-    }
-    if (s->ctrl_queue != NULL) {
-        vQueueDelete(s->ctrl_queue);
-        s->ctrl_queue = NULL;
-    }
-    if (s->playback_intent_queue != NULL) {
-        vQueueDelete(s->playback_intent_queue);
-        s->playback_intent_queue = NULL;
-    }
-    if (s->session_lock != NULL) {
-        vSemaphoreDelete(s->session_lock);
-        s->session_lock = NULL;
-    }
-    if (s->stopped_sem != NULL) {
-        vSemaphoreDelete(s->stopped_sem);
-        s->stopped_sem = NULL;
-    }
-
-    spotify_service_state_reset(&s->state);
-}
-
-bool svc_spotify_restart(void *restart_ctx, void **out_handle)
-{
-    svc_spotify_restart_ctx_t *rc = (svc_spotify_restart_ctx_t *)restart_ctx;
-
-    svc_spotify_teardown(rc->s);
-    if (!svc_spotify_create(rc->s, &rc->cfg)) {
-        return false;
-    }
-    *out_handle = rc->s;
-    return true;
-}
-
-service_desc_t svc_spotify_service_desc(svc_spotify_restart_ctx_t *restart_ctx)
-{
-    /* LIFECYCLE.md §1.2's own worked example -- svc_spotify verbatim:
-     * RESTART_BACKOFF_THEN_DEGRADE/max_restarts=3/degraded_ok=true. */
-    service_desc_t desc = {
-        .id           = SVC_ID_SPOTIFY,
-        .name         = "svc_spotify",
-        .requires     = SVC_BIT(SVC_ID_STORAGE) | SVC_BIT(SVC_ID_NET_WIFI) | SVC_BIT(SVC_ID_NET_TIME),
-        .restart      = RESTART_BACKOFF_THEN_DEGRADE,
-        .max_restarts = 3,
-        .degraded_ok  = true,
-        .teardown     = svc_spotify_teardown,
-        .restart_fn   = svc_spotify_restart,
-        .restart_ctx  = restart_ctx,
-    };
-    return desc;
 }

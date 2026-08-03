@@ -36,10 +36,10 @@ typedef struct {
 } w_volume_cap_slider_cfg_t;
 
 typedef struct {
-    lv_obj_t *row;
+    lv_obj_t *row;             /* a COLUMN: caption line, then the bar row */
     lv_obj_t *slider;
-    lv_obj_t *label_caption;   /* static "Don't go past" */
-    lv_obj_t *label_readout;   /* live numeral, e.g. "70" */
+    lv_obj_t *label_caption;   /* static "Don't go past", on its own line above the bar */
+    lv_obj_t *label_readout;   /* live numeral, e.g. "35.0" */
     intent_submit_provider_t intent_submit;
 } w_volume_cap_slider_t;
 

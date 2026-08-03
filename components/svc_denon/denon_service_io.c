@@ -94,6 +94,16 @@ static void publish_and_write(svc_denon_t *d, denon_evt_kind_t kind)
      * second copy of link state inside denon_state_t. */
     link_status_t status = (denon_link_fsm_current_state(&d->state.link_fsm) == DENON_LINK_STATE_CONNECTED_TELNET)
                                 ? LINK_STATUS_OK : LINK_STATUS_STALE;
+    /* Every parsed line republishes the WHOLE local_state, so a field this
+     * service has not learned yet goes out as 0 alongside the one that just
+     * changed -- e.g. a PW/SI reply arriving before any MV reply publishes
+     * volume 0, and the UI faithfully renders it. Logging what is actually
+     * written (and on which event) is what distinguishes "the AVR told us
+     * 0" from "we never learned the volume and are publishing a default". */
+    ESP_LOGD(TAG, "publish kind=%d -> vol=%u power=%d muted=%d input=%u status=%d",
+              (int)kind, (unsigned)d->state.local_state.volume_half_db,
+              (int)d->state.local_state.power_on, (int)d->state.local_state.muted,
+              (unsigned)d->state.local_state.input_id, (int)status);
     core_state_write(d->state_store, DOMAIN_DENON, status, &d->state.local_state, sizeof(d->state.local_state));
 }
 
@@ -215,8 +225,19 @@ bool denon_service_io_tick(svc_denon_t *d)
         /* EVENTS_AND_STATE.md §6.4's "the log is the entire debugging
          * story" -- this is the one line that lets a real-hardware
          * verification actually see what half-dB value made it past the
-         * safety clamp onto the wire. */
-        ESP_LOGI(TAG, "sent: %s", cmd.cmd);
+         * safety clamp onto the wire.
+         *
+         * DEBUG, not INFO: this fires per wire line, and the AVR emits a
+         * burst of MV lines during any volume ramp (plus this file's own 4
+         * status queries every 3s), so at INFO it is a steady background
+         * drip through the full svc_logging pipeline -- vsnprintf, a
+         * redaction scan, a ring write, and a blocking UART write at
+         * 115200 -- on the denon task. CONFIG_LOG_MAXIMUM_LEVEL_DEBUG is
+         * on (sdkconfig.defaults), so the debugging story above is still
+         * one runtime log-level change away, which is the right price for
+         * something needed during bring-up and verification rather than
+         * continuously in normal operation. */
+        ESP_LOGD(TAG, "sent: %s", cmd.cmd);
         /* Round-trip latency (Connection screen, Phase 6) starts counting
          * from here -- see denon_service_state.h's own comment on
          * last_send_us/round_trip_pending for why this is an honest
@@ -234,7 +255,7 @@ bool denon_service_io_tick(svc_denon_t *d)
     if (pr == DENON_TRANSPORT_POLL_LOST) {
         dispatch_link_lost(d, s);
     } else if (pr == DENON_TRANSPORT_POLL_LINE) {
-        ESP_LOGI(TAG, "recv: %s", line);
+        ESP_LOGD(TAG, "recv: %s", line);   /* DEBUG for the same reason as "sent:" above */
         /* A real line arrived by whatever means (broadcast or a response
          * to our own query) -- push the next active query back out, so
          * this stays quiet while the link is actually delivering data, and

@@ -40,6 +40,16 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
 {
     w->intent_submit = cfg->intent_submit;
 
+    /* A column: the "Don't go past" caption on its own line, then a bar row
+     * built to exactly mirror w_volume_slider's own (same VOL lead-in text/
+     * font, same THEME_SPACE_M gaps, same 56px hit height, same readout
+     * font) -- so the track itself lands at an identical width and x
+     * position on every screen that has one. The caption is above rather
+     * than inline precisely because "Don't go past" is far wider than "VOL"
+     * and would otherwise squeeze this screen's track narrower than the
+     * others'. Bottom-anchored by the caller (screen_connection.c), and the
+     * bar row is this column's last child, so the track's own vertical
+     * position matches the other screens' too, not just its width. */
     w->row = lv_obj_create(parent);
     if (w->row == NULL) {
         return NULL;
@@ -48,10 +58,11 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
     lv_obj_set_style_bg_opa(w->row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(w->row, 0, 0);
     lv_obj_set_style_pad_all(w->row, 0, 0);
-    lv_obj_set_style_pad_column(w->row, THEME_SPACE_M, 0);
-    lv_obj_set_flex_flow(w->row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(w->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_size(w->row, LV_PCT(100), W_VOLUME_CAP_SLIDER_HIT_H);
+    lv_obj_set_style_pad_row(w->row, THEME_SPACE_XS, 0);
+    lv_obj_set_flex_flow(w->row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(w->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_width(w->row, LV_PCT(100));
+    lv_obj_set_height(w->row, LV_SIZE_CONTENT);
 
     w->label_caption = lv_label_create(w->row);
     if (w->label_caption == NULL) {
@@ -62,7 +73,32 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
     lv_obj_set_style_text_color(w->label_caption, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_label_set_text(w->label_caption, "Don't go past");
 
-    w->slider = lv_slider_create(w->row);
+    lv_obj_t *bar_row = lv_obj_create(w->row);
+    if (bar_row == NULL) {
+        return NULL;
+    }
+    lv_obj_remove_flag(bar_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(bar_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bar_row, 0, 0);
+    lv_obj_set_style_pad_all(bar_row, 0, 0);
+    lv_obj_set_style_pad_column(bar_row, THEME_SPACE_M, 0);
+    lv_obj_set_flex_flow(bar_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_size(bar_row, LV_PCT(100), W_VOLUME_CAP_SLIDER_HIT_H);
+
+    /* Same text and font as w_volume_slider's own lead-in -- this is what
+     * holds the track's left inset identical across screens. Not stored on
+     * the widget: set once here, never updated. */
+    lv_obj_t *label_vol = lv_label_create(bar_row);
+    if (label_vol == NULL) {
+        return NULL;
+    }
+    lv_obj_remove_flag(label_vol, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_text_font(label_vol, &ui_font_meta, 0);
+    lv_obj_set_style_text_color(label_vol, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_label_set_text(label_vol, "VOL");
+
+    w->slider = lv_slider_create(bar_row);
     if (w->slider == NULL) {
         return NULL;
     }
@@ -91,7 +127,7 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
 
     lv_obj_add_event_cb(w->slider, on_value_changed, LV_EVENT_VALUE_CHANGED, w);
 
-    w->label_readout = lv_label_create(w->row);
+    w->label_readout = lv_label_create(bar_row);
     if (w->label_readout == NULL) {
         return NULL;
     }

@@ -14,7 +14,8 @@ ui_app          owns lv_display, the root object, the event subscription,
                 growth is real-hardware-finding comments, e.g. the LVGL PSRAM
                 pool/draw-buffer sizing history, not added logic.)
     │
-ui_router       screen stack, transitions, back/gesture handling, lifecycle
+ui_router       the 4-screen pager, tap-only navigation, screen lifecycle
+                (no gesture handling — see §3)
     │
 view_model      domain state ──► display-ready values (the translation layer)
     │
@@ -32,20 +33,29 @@ of "format 187000 ms as 3:07", "clamp volume to the safe range", "pick a colour 
 STALE state". Three screens later that logic has drifted and the product feels incoherent.
 
 ```c
-/* view_model.c — the only place domain data becomes display data */
+/* view_model_now_playing.h — the real, current struct (not the illustrative one
+ * this doc originally sketched before any screen existed — text fields are sized
+ * from the real source, playback_state_t's own PLAYBACK_*_MAX, not an arbitrary 96) */
 typedef struct {
-    char      title[96];          /* pre-truncated, UTF-8 safe */
-    char      artist[96];
-    char      album[96];
-    char      elapsed[8];         /* "3:07"   */
-    char      remaining[8];       /* "-1:24"  */
-    uint16_t  progress_permille;  /* 0..1000, already interpolated */
+    char      title[PLAYBACK_TITLE_MAX];
+    char      artist[PLAYBACK_ARTIST_MAX];
+    char      album[PLAYBACK_ALBUM_MAX];
+    char      elapsed[VM_ELAPSED_MAX];        /* "3:07"   */
+    char      remaining[VM_REMAINING_MAX];    /* "-1:24"  */
+    uint16_t  progress_permille;              /* 0..1000, already interpolated */
+    uint32_t  duration_ms;                    /* raw value — w_progress_bar needs it to
+                                                  convert a drag position into a seek target */
     bool      is_playing;
-    bool      pending;            /* optimistic intent in flight */
-    tone_t    tone;               /* LIVE | STALE | OFFLINE */
-    lv_color_t accent;            /* derived from album art */
+    bool      pending;                        /* optimistic intent in flight */
+    char      volume_display[VM_VOLUME_DISPLAY_MAX];   /* "52.5" — Denon's own volume */
+    uint16_t  volume_half_db_raw;              /* seeds the real volume slider's position */
+    bool      has_active_device;
 } now_playing_vm_t;
 ```
+
+No `tone`/`accent` fields — both were built, then removed once real hardware and user
+feedback overtook the design that needed them (§5.2). Every other screen has its own equally
+small pure `*_vm_t` and builder (`denon_vm_t`/`connection_vm_t`/`system_vm_t`).
 
 Screens receive a `*_vm_t` and do nothing but assign it to widgets. That makes screens
 trivial, and it makes the interesting logic host-testable with no LVGL and no hardware.
@@ -75,26 +85,34 @@ Hard rules, enforced by review and by a debug-build assertion on loop duration:
 
 ## 3. Screens and navigation
 
-Three peer screens on a horizontal pager, plus modals and system screens.
+Four peer screens on a horizontal pager. **Navigation is tap-only, via page-edge tabs** —
+not swipe, and not page dots; both were built and then removed on real-hardware feedback
+(see below).
 
 ```
-   ◄── swipe ──►            ◄── swipe ──►
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  NOW PLAYING │    │    DENON     │    │   SETTINGS   │
-│   (default)  │    │              │    │              │
-└──────────────┘    └──────────────┘    └──────────────┘
-        ▲                   ▲                   ▲
-        └───────── page indicator dots ─────────┘
-
-Modals (slide up, dismiss by swipe-down):
-   volume sheet · input picker · listening-mode picker · re-pair QR · confirm
-
-System screens (router-owned, preempt everything):
-   boot · provisioning · reauth · ota-applying · fatal
+      ◄─ tab ─►       ◄─ tab ─►        ◄─ tab ─►
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│    DENON     │ │ NOW PLAYING  │ │  CONNECTION  │ │    SYSTEM    │
+│  (Receiver)  │ │  (default)   │ │              │ │              │
+└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
-Three top-level destinations, reachable by one swipe, no hierarchy to remember. That is the
-Sonos/Tesla model and it is right for a wall device that gets glanced at, not browsed.
+Order is fixed and never wraps. Now Playing is the default/boot screen. **Modals are not
+built at all** — deferred with their first real caller, since an API with zero callers is
+exactly the kind of thing to get wrong. **System screens** (boot · provisioning · reauth ·
+ota-applying · fatal) aren't built either; nothing triggers one yet.
+
+**Navigation — three real reversals, all driven by hardware, all worth recording:**
+
+1. **Swipe/free-drag paging is gone.** Under this board's render path (§2), a continuous
+   drag-scroll of two full-width screens redraws a large dirty rect on essentially every
+   touch-move tick — the most expensive pattern available here, and the direct cause of a
+   real "too slow" report. Replaced by tap-only page-edge tabs (`w_page_edge_tab`).
+2. **The 180 ms slide that replaced it is also gone.** Even a bounded, one-shot tween tiled
+   several full-width redraw passes per animated frame and looked choppy on real hardware.
+   `ui_router_go_to_screen()` is now an instant jump (`LV_ANIM_OFF`).
+3. **`w_page_dots` is deleted, not deferred.** The edge tabs already encode both position and
+   direction, so a separate indicator was redundant clutter.
 
 **Lifecycle contract** — every screen implements the same vtable:
 
@@ -108,11 +126,17 @@ typedef struct {
 } screen_if_t;
 ```
 
-- Now Playing and Denon are **created once at boot and never destroyed** — swiping between
-  them must be instant and allocation-free.
-- Settings and modals are created on demand and destroyed on exit, from the LVGL pool.
-- `unmount` **must** stop every animation and timer it started. A leaked `lv_anim` on a
-  hidden screen is a silent frame-rate tax that is miserable to find later.
+- **All four screens are created once at registration and never destroyed** — not just Now
+  Playing and Denon as this line originally said. Paging must be instant and allocation-free,
+  and with no modals built there is nothing left that's created on demand.
+- `ui_router_update()` only forwards to the screen currently being *looked at*. An off-screen
+  screen's widgets would still do real invalidation/layout work if updated, before LVGL ever
+  clips the drawing.
+- `mount`/`unmount`/`destroy` are no-op bodies on every screen today: subscriptions live in
+  each screen's own `view_model_*_apply_t` glue (driven by `ui_app_task`), not in the screen
+  vtable. The contract still stands for any future screen that does start an animation or
+  timer — `unmount` **must** stop everything it started; a leaked `lv_anim` on a hidden
+  screen is a silent frame-rate tax that is miserable to find later.
 
 ---
 
@@ -120,38 +144,79 @@ typedef struct {
 
 Reusable, parameterised, no screen-specific branching inside them.
 
-This was originally a 14-widget catalogue written for a "Balanced" card-layout mock. Phase 5
-built Art-forward instead (§6) and only the 7 widgets that layout actually uses; the
-remaining 7 are real Phase 6 scope, not cut. `w_backdrop` isn't separately built at all under
-Art-forward — the full-bleed art card *is* the backdrop, so it folds into `w_art_card`.
+Originally a 14-widget catalogue written for a "Balanced" card-layout mock. Phase 5 built
+Art-forward instead and only the widgets that layout actually uses; Phase 6 added its own as
+its three real screens landed. Several of the original 14 turned out to answer a design that
+no longer exists — those are marked cut, not pending.
 
-**Built, Phase 5:**
+**Built, Phase 5 (Now Playing):**
 
 | Widget | Purpose |
 |---|---|
 | `w_art_card` | Full-bleed album art + integrated scrim, placeholder state. **No animated crossfade** — a real finding, not the original design: `w_art_card_set_artwork()` drops to the neutral placeholder the *instant* the currently-playing track id changes (from `playback_state_t`, which updates immediately), independent of whether the new artwork has finished fetching/decoding yet (that can lag up to ~1.8s, RISKS.md R1); once it does, the new image pops in at full opacity directly, not an animated fade — an earlier animated opacity transition (TRANSP→COVER over 600ms) forced LVGL's software renderer through a real alpha-compositing layer for every frame, measured at 337ms for a single frame on real hardware, well over R10's 100ms stall budget. Filed as a real follow-up: either root-cause LVGL's layer-alloc cost directly, or fade via a cheaper mechanism that doesn't force a layer. **Square corners, not rounded** — a separate real finding: with rounded corners (`clip_corner`) enabled, LVGL's own compositing-layer allocator (`lv_draw_layer_alloc_buf`) never returns on this real hardware/LVGL-version combination, confirmed stuck inside `lv_tlsf.c`'s own block search, not failing or asserting, at every pool size tried. Root cause not found; `clip_corner` is off as the working fix. The scrim itself is a flat, solid, per-track-adaptive opacity, not the vertical gradient this section originally described (§6) — RGB565's 16-bit color depth made a smooth opacity ramp visibly band on real hardware. |
 | `w_marquee_label` | Text that gently scrolls only when it overflows, pauses at each end |
-| `w_progress_bar` | Interpolated progress + elapsed/remaining. **Display-only, no scrub-on-drag** — `spotify_intent.h` has no SEEK intent kind and `NETWORKING.md` §1.3's endpoint list has no seek endpoint; there is nothing to wire a drag gesture to yet |
-| `w_transport` | Prev / play-pause / next, with the pending-state treatment. **No heart/favorite** — no Spotify save/favorite endpoint exists anywhere in this project's own endpoint list, so a heart icon would be a permanently-dead tap target |
+| `w_progress_bar` | Interpolated progress + elapsed/remaining, **with real drag-to-seek** — the "display-only, nothing to wire a drag to" note this row used to carry is obsolete: real-hardware feedback asked for a working scrubber, so `PLAYBACK_INTENT_SEEK` was built end to end (`playback_intent_types.h`, `spotify_intent.c`, `spotify_api.c`'s `PUT .../seek`). Commits once on release, not per touch-move sample — a real Spotify call has none of the local coalescing Denon's cmdq gives volume drags for free |
+| `w_transport` | Prev / play-pause / next, with the pending-state treatment. Real drawn triangles (`lv_draw_triangle`), not symbol-font glyphs. **No heart/favorite** — no Spotify save/favorite endpoint exists anywhere in this project's own endpoint list, so a heart icon would be a permanently-dead tap target |
+| `w_volume_slider` | The real, live-dragging Denon volume control (§6). Submits `INTENT_DOMAIN_MULTI` per [adr/0007](adr/0007-denon-volume-is-primary.md), never a raw Denon intent — that would bypass the Spotify-retarget resolver |
+| `w_stroke_label` | Black-stroked overlay text, legible against unpredictable artwork. Art-forward has no scrim behind the title/artist block, so the stroke is the only thing carrying contrast there |
 | `w_toast` | Transient bottom message, auto-dismiss, queued — `TOPIC_TOAST`'s real consumer |
-| `w_status_pill` | Small connectivity/link indicator; the honest STALE/OFFLINE surface |
-| `w_page_dots` | Pager position indicator |
+| `w_page_edge_tab` | The real navigation control (§3) — tap-only, router-owned, shared across all four screens |
 
-**Phase 6, not yet built:**
+**Built, Phase 6 (Receiver / Connection / System):**
 
 | Widget | Purpose |
 |---|---|
-| `w_backdrop` | Not needed under Art-forward — see above |
-| `w_icon_toggle` | Shuffle, repeat, mute — off / on / on-with-variant (repeat-one) |
-| `w_volume_dial` | Arc drag control; used for both Spotify and Denon volume |
-| `w_volume_sheet` | Modal with dial, numeric dB, mute, safety-limit indication |
-| `w_list_row` | Label + value + optional chevron/toggle. Every settings and picker row. |
-| `w_picker` | Modal single-select list (inputs, listening modes, enum settings) |
-| `w_qr` | QR rendering for provisioning and Spotify re-pair |
+| `w_power_glyph` | Ring+notch power glyph, tri-state colour (gray off / green on+healthy / amber on+link-uncertain). Built in Phase 5 for a Now Playing header that was then removed; kept for exactly this caller, and now real |
+| `w_power_row` | Full-card tap target wrapping `w_power_glyph` + a state label + a decorative switch-look indicator. Both tap surfaces converge on the one real `w_power_glyph_toggle()` — never a duplicated toggle path |
+| `w_source_status_card` | Read-only "which source/transport is active" card, in a row of two. Used twice: Receiver's Spotify/TV-audio pair, Connection's Telnet/HTTP pair (via a no-icon variant). Deliberately **not** tappable — see below |
+| `w_info_row` | `label ......... value`, with an optional leading status dot and tone-coloured value. Every row on Connection and System |
+| `w_volume_cap_slider` | The volume safety-cap control. Amber, not green — it constrains rather than plays. Submits `INTENT_DOMAIN_SETTINGS`, the first real user of that domain (§4b) |
+
+`w_source_status_card` has no click handler at all, on purpose. On the Receiver screen the
+power toggle already fully determines `input_id` as a binary choice (on → `DENON_INPUT_NET`,
+off → `DENON_INPUT_TV`), so a second independently-tappable input control could only fight
+it. This also avoids re-entering a known hazard: an earlier tappable multi-row picker
+(`w_device_picker`) was built and then fully reverted after a real hardware hang traced to
+per-object `lv_style_t` allocation in a loop.
+
+**Cut, not deferred:**
+
+| Widget | Why |
+|---|---|
+| `w_backdrop` | Not needed under Art-forward — the art card *is* the backdrop |
+| `w_page_dots` | Built, then deleted — the edge tabs already encode position and direction (§3) |
+| `w_status_pill` | Built, never called. Its STALE/OFFLINE signal moved to the System screen's tone-coloured rows — a better home than a pill over artwork. Kept in-tree, no caller |
+| `w_list_row` | Superseded by `w_info_row` — the same idea, built against a real screen |
+
+**Still genuinely unbuilt** (each waits on a feature that doesn't exist yet, not on UI work):
+`w_icon_toggle` (shuffle/repeat/mute), `w_volume_dial` + `w_volume_sheet` (a modal volume
+sheet — no modal infrastructure exists, §3), `w_picker` (input/listening-mode pickers),
+`w_qr` (provisioning and Spotify re-pair screens).
 
 Each widget owns a small `*_cfg_t` and exposes `create(parent, cfg)` plus `set_*` updaters.
 No widget reads global state or the event bus — everything arrives through its setters.
 That is what makes them reusable and what keeps duplicated UI code from reappearing.
+
+### 4b. How a widget changes a *setting*
+
+Every other UI control submits an intent a service consumes directly. The volume-cap slider
+is the first that changes a stored **setting**, and that path did not exist:
+`INTENT_DOMAIN_SETTINGS` had been declared in `intent_types.h` since Phase 1 but had no
+payload shape and no dispatch case anywhere — a repo-wide search confirmed it was dead.
+
+```
+w_volume_cap_slider ──INTENT_DOMAIN_SETTINGS──► dispatch_one_intent()   (app_wiring_ticks.c)
+                                                        │  settings_set_u8()
+                                                        ▼
+                       svc_denon_set_volume_limit() ◄── TOPIC_SETTINGS relay (already existed)
+```
+
+- **`ui` never touches `svc_settings`.** It can't — `tools/arch_rules.json` gives `ui` no
+  `svc` edge. The intent's shape lives in `core_types` (`settings_intent_types.h`), reachable
+  by both `ui` (to build it) and `main` (to apply it) — the same "moved, not duplicated"
+  treatment `denon_intent_types.h` already got.
+- **Only the submit side was new.** The relay already existed, so a setting written this way
+  lands everywhere a console-written one would.
 
 ---
 
@@ -162,49 +227,55 @@ That is what makes them reusable and what keeps duplicated UI code from reappear
 No hex colour, pixel size, or duration appears outside `theme/`. Screens and widgets refer
 to semantic roles only.
 
+The real, current token list (`theme_colors.h`) — these are the OKLCH-derived values the
+Art-forward redesign computed via `theme_tokens_oklch_to_rgb565()`, not hand-picked hex:
+
 ```c
-THEME_COLOR_BG              /* #0A0A0C  near-black, slightly cool          */
+THEME_COLOR_BG              /* #090C0A  near-black, slightly cool          */
 THEME_COLOR_SURFACE         /* #141417  cards                              */
 THEME_COLOR_SURFACE_HIGH    /* #1F1F24  raised / pressed                   */
 THEME_COLOR_TEXT_PRIMARY    /* #F5F5F7                                     */
 THEME_COLOR_TEXT_SECONDARY  /* #A0A0A8                                     */
 THEME_COLOR_TEXT_TERTIARY   /* #6A6A72                                     */
-THEME_COLOR_ACCENT          /* dynamic — from album art                    */
-THEME_COLOR_ACCENT_MUTED
-THEME_COLOR_STALE           /* the honest "data is old" tint               */
-THEME_COLOR_DANGER
+THEME_COLOR_TEXT_ONIMAGE    /* #E4E4E4  overlay text over full-bleed art   */
+THEME_COLOR_TEXT_STROKE     /* #000000  w_stroke_label's outline           */
+THEME_COLOR_ACCENT_LIVE     /* #4ADD8C  healthy/live green                 */
+THEME_COLOR_STALE           /* #C9A227  the honest "data is old" tint      */
+THEME_COLOR_DANGER          /* #D9534F  offline / rejected                 */
 ```
 
 Semantic naming is what makes a light theme, a night theme, or a rebrand a one-file change
 three years from now.
 
-### 5.2 Dynamic accent — the premium detail
+### 5.2 Dynamic accent — built, then removed from the UI
 
 `artwork_palette.c` extracts a dominant colour during JPEG decode (it already has the
-downscaled thumbnail, so this is nearly free):
+decoded buffer, so this is nearly free): downsample, histogram, discard
+near-black/near-white/low-saturation bins, take the modal hue, boost saturation, clamp
+luminance for contrast, and publish it as `artwork_state_t.dominant_color_rgb565`.
 
-1. Downsample to 32 × 32.
-2. Histogram in HSV, discard near-black/near-white/low-saturation bins.
-3. Take the modal hue, boost saturation, then **clamp luminance** so text contrast against
-   it always clears 4.5:1.
-4. Emit `accent` + `accent_muted` on `TOPIC_ARTWORK`.
-
-The accent drives the progress bar, active toggles, and the backdrop tint. The whole panel
-subtly takes on the colour of the album currently playing. It is the single cheapest thing
-we can do that makes the device feel designed rather than assembled — and step 3 is what
-keeps it from also making the device unreadable.
+**Nothing in the UI consumes it today.** The accent had exactly two consumers — the progress
+bar's fill colour and the old scrim's contrast logic — and the Art-forward redesign removed
+both (the scrub bar is flat white per the design spec, "no scrim, no gradient, no vignette…
+traded away for the art"). `now_playing_vm_t.accent_rgb565` is gone with them. The
+extraction itself stays: it's real, general-purpose `core_state` data with its own
+service-level existence, and a UI-only redesign has no business deleting it upstream. If a
+future screen wants a per-track accent, the data is already there.
 
 ### 5.3 Typography
 
-Four sizes, no more. A 480 px panel read from across a room needs large type and ruthless
-hierarchy.
+The real, current font set (`theme_fonts.h`). Two families — Archivo for reading, IBM Plex
+Mono for numbers that change in place, so digits don't jitter:
 
-| Role | Size | Weight |
+| Token | Size / weight | Used for |
 |---|---|---|
-| Track title | 40 px | Semibold |
-| Artist | 26 px | Regular |
-| Album / meta | 18 px | Regular |
-| Labels / time | 15 px | Medium |
+| `ui_font_display` | 44 / 700 | reserved — no current caller |
+| `ui_font_hero` | 38 / 700 | Now Playing's track title |
+| `ui_font_title` | 30 / 600 | System's verdict headline |
+| `ui_font_body` | 20 / 400 | Now Playing's artist line, toasts |
+| `ui_font_label` | 16 / 500 | row labels/values, card titles |
+| `ui_font_meta` | 13 / 500 mono | captions, section headers, subtitles, timestamps |
+| `ui_font_meta_lg` | 15 / 500 mono | volume readouts |
 
 ### 5.3b Glyph coverage and fallback
 
@@ -243,78 +314,39 @@ appear eventually. The rule:
 ```c
 THEME_RADIUS_CARD      20 px      THEME_SPACE_XS   4      THEME_SPACE_L   24
 THEME_RADIUS_SHEET     28 px      THEME_SPACE_S    8      THEME_SPACE_XL  32
-THEME_RADIUS_PILL      999        THEME_SPACE_M    16
+                                  THEME_SPACE_M    16
 THEME_TOUCH_MIN        56 px      /* a wall device is touched imprecisely */
 
 THEME_MOTION_INSTANT   100 ms  ease-out    /* press feedback        */
 THEME_MOTION_QUICK     200 ms  ease-out    /* toggles, toasts       */
-THEME_MOTION_STANDARD  320 ms  ease-in-out /* screen transitions    */
-THEME_MOTION_SLOW      600 ms  ease-in-out /* unused — see below     */
+THEME_MOTION_STANDARD  180 ms  ease-in-out /* unused — see below    */
+THEME_MOTION_SLOW      600 ms  ease-in-out /* unused — see below    */
 THEME_MOTION_AMBIENT  1200 ms  linear      /* backdrop drift        */
 ```
 
-All animation goes through `lv_anim`. No manual per-frame timers, no `lv_refr_now()`.
-Motion is what separates this from a dashboard, so it gets tokens and consistency rather
-than per-site tuning.
+No `THEME_RADIUS_PILL` — widgets that want a fully round shape use LVGL's own
+`LV_RADIUS_CIRCLE` directly; a token that just aliases an LVGL constant adds a name without
+adding a decision.
 
-**`THEME_MOTION_SLOW` is currently unused** — it was defined for the artwork crossfade
-(§4's `w_art_card` entry), but that animation was removed on real hardware: animating the
-art image's opacity forced LVGL's software renderer through a real alpha-compositing layer,
-measured at 337ms for a single frame, well over R10's 100ms stall budget. The artwork switch
-is instant now (placeholder on track change, a direct opacity pop once decode completes), no
-`lv_anim` involved. Left defined rather than removed, in case a cheaper crossfade mechanism
-(not forced through LVGL's layer-compositing path) replaces the current instant pop later.
+All animation goes through `lv_anim`. No manual per-frame timers, no `lv_refr_now()`.
+
+**Two of the five motion tokens are currently unused, for the same real reason:** this
+board's render path (`LV_DISPLAY_RENDER_MODE_PARTIAL`, a single small draw buffer) makes
+full-screen animation genuinely expensive, and both animations that would have used them
+were measured and removed rather than shipped choppy — `THEME_MOTION_SLOW` was the artwork
+crossfade (337 ms for a single frame through an alpha-compositing layer, well over R10's
+100 ms budget — §4's `w_art_card` entry), and `THEME_MOTION_STANDARD` was briefly the
+page-transition slide (§3). Both are left defined in case a cheaper mechanism makes either
+viable later. Motion is still what separates this from a dashboard — but not at the cost of
+a visibly worse frame.
 
 ---
 
-## 6. Now Playing — the screen that matters
+## 6. The screens themselves
 
-**Art-forward, not the card layout below's original "Balanced" design** — full-bleed artwork
-with overlaid controls, chosen explicitly over this section's own original mock before any
-Phase 5 build work started. This is what actually shipped:
-
-```
-┌────────────────────────────────────────────┐
-│ (status pill, if not LIVE)   Living Room   │  top overlay: active Spotify Connect
-│                                            │  device name (playback_state_t.device_name),
-│                                            │  read-only — not the clock this section
-│                                            │  originally mocked; see prose below
-│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
-│    ▓▓▓▓▓▓▓  full-bleed album art  ▓▓▓▓▓▓▓  │  square corners, not rounded (§4)
-│    ▓▓▓▓▓▓▓  + flat adaptive scrim ▓▓▓▓▓▓▓  │  solid opacity, not a gradient (§4)
-│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
-│                                            │
-│      Track Title Goes Here                 │  hero, marquee if long
-│      Artist Name                           │  secondary
-│      ──────────●─────────────────          │  accent-tinted, display-only (no scrub, §4)
-│      1:24                        -2:41     │  tertiary
-│         ◀◀        ⏸        ▶▶      -18dB   │  56 px targets, no heart (§4);
-│                                            │  read-only Denon volume badge, no tap handler
-│                  ● ○ ○                     │  page dots
-└────────────────────────────────────────────┘
-```
-
-- Artwork drops to a neutral placeholder the *instant* the currently-playing track id
-  changes (from `playback_state_t`, which updates immediately) — text/metadata update on the
-  same event, so nothing lags. The new artwork pops in (no animation, §4) once its own
-  `DOMAIN_ARTWORK` update, matching that same track id, actually arrives — that can take up
-  to ~1.8s (RISKS.md R1), which is why these are driven by two separate track ids, not one:
-  a real bug, found live, had the placeholder wait for the artwork-side id too, so the old
-  cover visibly lingered under the new track's title/artist for that whole window.
-- The progress bar animates continuously from local interpolation, corrected smoothly on
-  each poll — never a visible jump.
-- The device-name label (top-right) is `playback_state_t.device_name`, live, read-only. A
-  tap-to-switch device picker (choose which Spotify Connect device is playing) was built and
-  confirmed working on real hardware, then explicitly reverted at the user's request — the
-  label is not wired to anything.
-- The volume badge is `denon_state_t`'s own volume (Denon is the primary volume control,
-  ADR-0007) — live, read-only. Tapping it does nothing in Phase 5; `w_volume_sheet` (a modal)
-  is Phase 6.
-- When `tone == STALE` or `OFFLINE`, a `w_status_pill` appears top-left. Content stays
-  visible — we degrade legibly instead of blanking.
-- Play/pause/prev/next are optimistic: the tap dims/disables the row immediately (not a full
-  per-field state flip), then reconciles against a real `INTENT_ACK_EVT_ACCEPTED`/`REJECTED`
-  or a 3 s abandon timeout, per §6.3 of [EVENTS_AND_STATE.md](EVENTS_AND_STATE.md).
+Layouts, per-screen behaviour, and the real findings behind each — moved to
+**[UI_SCREENS.md](UI_SCREENS.md)** when this file outgrew the 400-line limit
+(`tools/check_limits.py`). Four screens: Now Playing, Receiver, Connection, System.
 
 ---
 
@@ -331,20 +363,15 @@ for why the backlight itself has only one real transition to make.
 | `NIGHT` | on | monochrome clock/track, no accent colour |
 
 - **Backlight dimming is real, contrary to an earlier finding in this section** — Phase 5
-  Tier 3's original hal_backlight bring-up concluded the backlight was binary-only because it
-  assumed the IO expander was a CH422G with only a digital enable pin. Phase 5 Tier 7 real-
-  hardware work found the real chip is a CH32V003 with a genuine PWM register (`REG_PWM`,
-  0–255, inverted: 0x00 is full brightness, 0xFF is off) — confirmed by reading Waveshare's
-  own official reference source directly, not assumed. Real dimming is possible on this
-  hardware. `hal_backlight.c` still only exposes binary on/off today, because Phase 5's own
-  scope doesn't need more than that (the backlight is fixed-on throughout `ACTIVE`/`DIM`/
-  `NIGHT`, matching the table above); `DIM`/`NIGHT` still achieve their calmer feel entirely
-  through content (animation reduction, monochrome rendering, hidden transport), not a
-  backlight change. This is a scope decision for Phase 5, not a hardware limitation —
-  Phase 6's `svc_power` is free to build real backlight ramping against this same PWM
-  register when dim/sleep/wake actually gets designed; nothing here promises it will.
-  `THEME_MOTION_AMBIENT` (§5.4) still doesn't apply to backlight in Phase 5, only to backdrop
-  drift, since no backlight animation exists to apply it to yet.
+  Tier 3's bring-up concluded binary-only because it assumed the IO expander was a CH422G
+  with just a digital enable pin. Tier 7 found the real chip is a CH32V003 with a genuine PWM
+  register (`REG_PWM`, 0–255, inverted) — confirmed against Waveshare's own reference source.
+  `hal_backlight.c` still exposes only on/off, because nothing needs more yet: the backlight
+  is fixed-on throughout `ACTIVE`/`DIM`/`NIGHT`, and those states get their calmer feel from
+  content (animation reduction, monochrome, hidden transport). A scope decision, not a
+  hardware limit — `svc_power` can build real ramping against that PWM register when
+  dim/sleep/wake actually gets designed. `THEME_MOTION_AMBIENT` (§5.4) accordingly applies
+  only to backdrop drift, not backlight.
 - Wake on touch is handled in `svc_input` **before** the gesture recogniser: the first
   touch after sleep wakes the panel and is *consumed*, never delivered as a tap. Otherwise
   a user brushing the screen skips a track.
@@ -355,12 +382,19 @@ for why the backlight itself has only one real transition to make.
 
 ## 8. Testing the UI
 
-- **View model and formatters** are pure C with no LVGL dependency → full host tests
-  (`test/host/test_view_model.c`). This is the majority of the logic that can actually be
-  wrong.
-- **Screens and widgets** get a `ui_harness` build that runs LVGL against the SDL/Linux
-  driver on the dev machine, so layout and motion can be iterated in seconds instead of
-  flash cycles. Worth the setup cost within the first week — the alternative is a two-minute
-  round trip for every 4-pixel adjustment, which is how UI polish silently gets abandoned.
-- **On target**, an FPS and dropped-frame counter is always running and visible on the
-  diagnostics screen.
+- **View model and formatters** are pure C with no LVGL dependency → full host tests, one
+  suite per module (`test_view_model_now_playing`, `_denon`, `_connection`, `_system`,
+  `_format`, `_text`, `_tone`, `_progress`, plus `test_theme_tokens`) — not the single
+  `test_view_model.c` this line originally named. This is the majority of the logic that can
+  actually be wrong.
+- **Screens and widgets** get a `ui_harness` build (`test/ui_harness/`) running LVGL against
+  SDL2 on the dev machine, linking the *same* router/screen/widget/view-model sources ESP-IDF
+  compiles, against fake `core_state`/`core_eventbus` fixtures. Two honest caveats: glue that
+  touches ESP-IDF directly can't link on host (`ui_app.c`, and `view_model_system_apply.c` —
+  the harness substitutes `fake_system_apply.c`), and **this project's real UI bugs have
+  consistently been found on hardware, not here** — the compositing-layer hang, the
+  render-cost measurements, the corner artifact, the boot-order bugs. Treat a clean harness
+  run as "it builds and doesn't crash", not as visual verification.
+- **On target**, frame and dropped-frame counters run continuously (`DOMAIN_UI`) and are
+  reported over UART by `svc_diagnostics` every 5 s. There is no on-device diagnostics
+  screen; the System screen (§6c) shows link health and identifiers, not frame counters.

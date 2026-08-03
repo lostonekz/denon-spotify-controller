@@ -123,10 +123,13 @@ The honest rule, which is enforceable:
 
 What this buys that the absolute rule did not:
 
-- **LVGL's churn is legitimate and contained.** Creating and destroying a settings screen
-  allocates — that is normal LVGL usage. Confining it to a private pool means its
-  fragmentation is bounded and can never starve networking. That isolation was always the
-  real design goal; "no allocation" was a bad description of it.
+- **LVGL's churn is legitimate and contained.** Building a screen's object tree allocates,
+  and every text/style update after that can too — that is normal LVGL usage. Confining it
+  to a private pool means its fragmentation is bounded and can never starve networking. That
+  isolation was always the real design goal; "no allocation" was a bad description of it.
+  (This bullet originally cited creating and destroying a settings screen; every screen is
+  in fact created once at registration and never destroyed — UI_ARCHITECTURE.md §3 — so the
+  churn that actually matters here is per-update, not per-screen-lifetime.)
 - **The network stacks get a measured budget instead of a rule they were always violating.**
   Their steady-state and peak usage are characterised in Phase 0/2 and become numbers in
   §1, not an assumption.

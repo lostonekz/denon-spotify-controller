@@ -61,7 +61,7 @@ system_vm_t view_model_system_build(const net_state_t *net, const denon_state_t 
      * anything else gets a single generic "needs attention" phrase rather
      * than trying to enumerate every possible combination in prose. */
     if (vm.wifi_tone == TONE_LIVE && vm.denon_tone == TONE_LIVE && vm.spotify_tone == TONE_LIVE) {
-        snprintf(vm.verdict, sizeof(vm.verdict), "Everything's working");
+        snprintf(vm.verdict, sizeof(vm.verdict), "Everything is working");
     } else {
         snprintf(vm.verdict, sizeof(vm.verdict), "Something needs attention");
     }
