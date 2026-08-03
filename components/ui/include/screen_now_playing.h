@@ -2,6 +2,16 @@
  * The Art-forward Now Playing screen (UI_ARCHITECTURE.md §6, Phase 5 plan's
  * Context section) -- composition only, per §1: no formatting, no business
  * rules, no drawing of its own, just widget setters fed from the vm.
+ *
+ * Art-forward redesign: w_status_pill is dropped from this screen entirely.
+ * Its STALE/OFFLINE signal originally got folded into a header device-name
+ * label's own tone-coloring, but that label (and the power glyph beside
+ * it) were removed too, per later live feedback: pressing Play already
+ * wakes the AVR and resumes playback there when nothing's active
+ * (w_transport.c, PLAYBACK_INTENT_RESUME_ON_AVR), making a separate
+ * standing header control redundant. Neither widget file is deleted
+ * (unlike w_page_dots) -- both stay unused here as likely reusable
+ * infrastructure for the real Denon/Settings screens Phase 6 will build.
  */
 #ifndef SCREEN_NOW_PLAYING_H
 #define SCREEN_NOW_PLAYING_H
@@ -14,9 +24,10 @@
 #include "w_art_card.h"
 #include "w_marquee_label.h"
 #include "w_progress_bar.h"
-#include "w_status_pill.h"
+#include "w_stroke_label.h"
 #include "w_toast.h"
 #include "w_transport.h"
+#include "w_volume_slider.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,21 +60,25 @@ typedef struct {
     /* Set by the caller (ui_app.c) before ui_router_register_screen();
      * create() reads these once and never again. */
     artwork_pixel_provider_t artwork_pixels;
-    intent_submit_provider_t intent_submit;
+    intent_submit_provider_t intent_submit;         /* wrapped -- pending-tracked, used by
+                                                          w_transport (the only domain the
+                                                          pending/toast/ACK machinery actually
+                                                          exists for) */
+    intent_submit_provider_t intent_submit_raw;   /* unwrapped -- used by w_volume_slider,
+                                                          on a domain that shouldn't fight the
+                                                          transport row's own pending/dim state
+                                                          (real bug found during planning -- see
+                                                          the redesign plan's own hardware
+                                                          critique) */
 
     /* Owned by this screen from create() onward. */
     w_art_card_t          art_card;
-    w_marquee_label_t     title_label;
-    lv_obj_t                 *artist_label;
-    w_progress_bar_t         progress_bar;
-    w_transport_t             transport;
-    w_status_pill_t             status_pill;
-    w_toast_t                     toast;
-    lv_obj_t                        *device_label;   /* top-right overlay slot -- was a live
-                                                       * clock, now the active Spotify Connect
-                                                       * device name (u->vm.device_name),
-                                                       * read-only display */
-    lv_obj_t                           *volume_label;
+    w_marquee_label_t        title_label;
+    w_stroke_label_t                  artist_label;
+    w_progress_bar_t                     progress_bar;
+    w_transport_t                           transport;
+    w_volume_slider_t                          volume;
+    w_toast_t                                     toast;
 } screen_now_playing_ctx_t;
 
 screen_if_t screen_now_playing_get_interface(void);

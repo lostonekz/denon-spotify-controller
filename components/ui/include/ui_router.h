@@ -1,13 +1,34 @@
 /*
- * ui_router -- the 3-peer horizontal pager and screen lifecycle dispatch
- * (UI_ARCHITECTURE.md §3). Phase 5 Tier 4: the pager mechanics (swipe,
- * scroll-snap, page dots, create/mount/unmount lifecycle dispatch) are
- * real now; all three registered screens are trivial placeholders (a
- * label + background) until Tier 6 (Now Playing) and Phase 6 (Denon,
- * Settings) swap in real content -- deliberately built this way so the
- * mechanics are proven against something real before they're the only
- * thing standing between three real screens and a broken swipe (Phase 5
- * plan §8).
+ * ui_router -- the 3-peer screen pager and lifecycle dispatch
+ * (UI_ARCHITECTURE.md §3).
+ *
+ * Art-forward redesign: the free-drag scroll-snap pager (Phase 5 Tier 4's
+ * original mechanism) is replaced entirely. Confirmed real, hardware-
+ * measured reason: under this board's shipped LV_DISPLAY_RENDER_MODE_
+ * PARTIAL + single small draw buffer (ui_app.c), a continuous drag-scroll
+ * of two full-width screens redraws a large dirty rect on essentially
+ * every touch-move tick (not once, like a fixed-duration animation) --
+ * the most expensive redraw pattern available on this exact hardware
+ * config, and the direct cause of the user's own "too slow" report. This
+ * is now an instant jump-cut, tap-only, driven by ui_router_go_to_screen()
+ * -- a fixed ~180ms slide (THEME_MOTION_STANDARD_MS) was tried first and
+ * genuinely built, but real-hardware feedback found even that bounded,
+ * one-shot animation choppy on this board's real render path, so it was
+ * removed too: navigating now just draws the destination screen directly,
+ * no animated frames at all. A swipe/gesture trigger was also built
+ * alongside the tap and separately removed after real-hardware feedback
+ * -- navigation goes through a tap on the side tabs alone now, nothing
+ * else. w_page_dots is gone with it -- the page-edge tabs already
+ * encode position and direction (which edge shows a tab, and which way it
+ * points), so a separate "which of 3 pages am I on" indicator is
+ * redundant clutter under the new quiet aesthetic.
+ *
+ * Screen order is now fixed and never wraps: Receiver (UI_SCREEN_DENON,
+ * leftmost) <- Now Playing (middle, default/boot screen) -> Browse
+ * (UI_SCREEN_SETTINGS, rightmost) -- the design system's own naming and
+ * ordering. Denon/Settings stay trivial placeholder screens (Phase 6
+ * swaps in real content); only the shared page-edge-tab navigation
+ * mechanism is new/real here.
  *
  * Modal presentation (volume sheet, pickers, etc.) is NOT built here at
  * all -- deferred to Phase 6 with its first real caller, per the same
@@ -21,16 +42,16 @@
 
 #include "lvgl.h"
 
-#include "w_page_dots.h"
+#include "w_page_edge_tab.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef enum {
-    UI_SCREEN_NOW_PLAYING = 0,
-    UI_SCREEN_DENON,
-    UI_SCREEN_SETTINGS,
+    UI_SCREEN_DENON = 0,      /* "Receiver" per the design system's own naming -- leftmost */
+    UI_SCREEN_NOW_PLAYING,    /* middle, default/boot screen */
+    UI_SCREEN_SETTINGS,       /* "Browse" per the design system's own naming -- rightmost */
     UI_SCREEN_COUNT,
 } ui_screen_id_t;
 
@@ -67,11 +88,15 @@ typedef struct {
 
 typedef struct {
     lv_display_t     *disp;
-    lv_obj_t       *pager;                      /* horizontal scroll-snap container,
-                                                    * loaded as the active LVGL screen */
-    w_page_dots_t    page_dots;                    /* Tier 6: real w_page_dots widget,
-                                                       * same behavior as Tier 4's own
-                                                       * inline dot row */
+    lv_obj_t       *pager;                      /* horizontal, non-scrollable container,
+                                                    * loaded as the active LVGL screen --
+                                                    * positioned only via
+                                                    * ui_router_go_to_screen()'s own
+                                                    * animation, never by touch-drag */
+    w_page_edge_tab_t left_tab;                    /* Receiver-ward, hidden on the
+                                                       leftmost screen */
+    w_page_edge_tab_t right_tab;                   /* Browse-ward, hidden on the
+                                                       rightmost screen */
 
     screen_if_t       screens[UI_SCREEN_COUNT];
     screen_ctx_t       ctxs[UI_SCREEN_COUNT];
@@ -80,25 +105,43 @@ typedef struct {
     ui_screen_id_t     active;
 } ui_router_t;
 
-/* Creates the pager container (3 x panel-width, scroll-snap, horizontal)
- * and the page-dots indicator, and loads the pager as the active LVGL
- * screen. Call ui_router_register_screen() for each of the 3 ids after
- * this returns -- the router has nothing to show until at least one
+/* Creates the pager container (3 x panel-width, horizontal, non-
+ * scrollable) and both page-edge tabs, and loads the pager as the active
+ * LVGL screen. Call ui_router_register_screen() for each of the 3 ids
+ * after this returns -- the router has nothing to show until at least one
  * screen is registered. */
 bool ui_router_create(ui_router_t *router, lv_display_t *disp);
 
-/* Calls screen_if.create() immediately (every Tier 4 screen is created at
- * registration time, never on demand -- see this file's own top comment
- * for why that's a deliberate Tier 4 simplification, not a permanent
- * constraint on every future screen) and mounts it if id == UI_SCREEN_NOW_
- * PLAYING (the default, active-on-boot screen per UI_ARCHITECTURE.md §3). */
+/* Calls screen_if.create() immediately (every screen is created at
+ * registration time, never on demand -- deliberate, matching this
+ * router's own "created once, never destroyed" contract) and mounts it if
+ * id == UI_SCREEN_NOW_PLAYING (the default, active-on-boot screen). */
 bool ui_router_register_screen(ui_router_t *router, ui_screen_id_t id, screen_if_t screen_if, void *user_ctx);
 
 /* Forwards to screen id's update() if it's registered. Safe to call for a
  * screen that isn't currently the visible/mounted one -- UI_ARCHITECTURE.md's
  * own "created once, never destroyed" screens are expected to stay
- * current even while off-screen, so swiping to them is instant. */
+ * current even while off-screen, so paging to them is instant. */
 void ui_router_update(ui_router_t *router, ui_screen_id_t id, const void *vm);
+
+/* Jumps instantly from the currently active screen to `target` via LVGL's
+ * own public lv_obj_scroll_to_x(pager, ..., LV_ANIM_OFF) -- no animation.
+ * A fixed ~180ms slide (LV_ANIM_ON) was the first real implementation, but
+ * real-hardware feedback found it choppy on this board's real render path
+ * (LV_DISPLAY_RENDER_MODE_PARTIAL + a single small draw buffer, ui_app.c
+ * -- even a bounded, one-shot tween still tiles several full-width redraw
+ * passes through it per animated frame) and asked for it removed entirely:
+ * this now just draws the destination screen directly, one step, no
+ * intermediate frames to look choppy. Dispatches unmount()/mount()
+ * synchronously, right here -- not via LV_EVENT_SCROLL_END, which is
+ * tied to an animation's own deletion (lv_obj_scroll.c's scroll_end_cb)
+ * and never fires for a non-animated scroll; there is no event to wait on
+ * for an instant jump. Returns false (no-op) if target is out of range or
+ * already active -- the fixed, non-wrapping order is enforced here, not
+ * left to callers. Called by a w_page_edge_tab tap only -- navigation is
+ * tap-only, deliberately (see w_page_edge_tab.h's own top comment);
+ * nothing in this router listens for LV_EVENT_GESTURE. */
+bool ui_router_go_to_screen(ui_router_t *router, ui_screen_id_t target);
 
 #ifdef __cplusplus
 }

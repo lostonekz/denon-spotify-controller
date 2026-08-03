@@ -34,6 +34,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "denon_intent_types.h"   /* denon_input_id_t's canonical definition --
+                                      moved to core_types so `ui`'s w_power_glyph
+                                      can construct it too; see that header's own
+                                      comment */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -69,22 +74,8 @@ denon_table_status_t denon_mu_parse(const char *s, denon_mute_t *out);
 denon_table_status_t denon_mu_format(denon_mute_t v, char *buf, size_t buflen);
 
 /* --- SI: input select (see the KNOWN GAP note above) --- */
-
-typedef enum {
-    DENON_INPUT_PHONO = 0,
-    DENON_INPUT_CD,
-    DENON_INPUT_TUNER,
-    DENON_INPUT_DVD,
-    DENON_INPUT_BD,
-    DENON_INPUT_TV,
-    DENON_INPUT_SAT_CBL,
-    DENON_INPUT_MPLAY,
-    DENON_INPUT_GAME,
-    DENON_INPUT_AUX1,
-    DENON_INPUT_NET,
-    DENON_INPUT_BT,
-    DENON_INPUT_COUNT,   /* not a real input -- array-sizing sentinel */
-} denon_input_id_t;
+/* denon_input_id_t's canonical definition now lives in denon_intent_types.h
+ * (core_types) -- included above. */
 
 denon_table_status_t denon_si_parse(const char *s, denon_input_id_t *out);
 denon_table_status_t denon_si_format(denon_input_id_t v, char *buf, size_t buflen);

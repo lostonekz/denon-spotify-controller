@@ -20,14 +20,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "denon_intent_types.h"   /* DENON_MV_HALF_DB_MIN/MAX's canonical definition
+                                      -- moved to core_types so `ui`'s
+                                      w_volume_slider can use the real clamp
+                                      domain too; see that header's own comment */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Denon absolute volume scale is 0.0 .. 98.0 dB in 0.5 steps.
- * 98.0 dB == 196 half-steps. 98.5 exists on the wire on some models. */
-#define DENON_MV_HALF_DB_MIN   0u
-#define DENON_MV_HALF_DB_MAX   197u   /* 98.5 dB */
 
 /* Longest output is "MV985" + NUL. */
 #define DENON_MV_BUF_LEN       8u

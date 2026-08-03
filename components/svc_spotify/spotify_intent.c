@@ -48,6 +48,10 @@ spotify_intent_result_t spotify_intent_to_cmd(const intent_t *intent, spotify_ap
          * something the user should see rejected outright. */
         out_cmd->u.volume_pct = (payload.volume_pct > 100) ? 100 : payload.volume_pct;
         return SPOTIFY_INTENT_RESULT_OK;
+    case PLAYBACK_INTENT_SEEK:
+        out_cmd->kind          = SPOTIFY_API_CMD_SEEK;
+        out_cmd->u.position_ms = payload.seek_position_ms;
+        return SPOTIFY_INTENT_RESULT_OK;
     default:
         return SPOTIFY_INTENT_RESULT_UNKNOWN_KIND;
     }

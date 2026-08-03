@@ -26,6 +26,25 @@ static const char *TAG = "svc_denon";
 
 #define DENON_IO_POLL_TIMEOUT_MS 250u   /* short enough to keep cmdq's 100ms rate-limit drain responsive */
 
+/* See denon_service_state.h's own comment on next_status_poll_due_us for
+ * why this exists. 3s: fast enough that a broken-broadcast link still
+ * converges quickly (a made-up value, not a spec -- nothing about Denon's
+ * protocol suggests a "correct" interval), slow enough not to read as
+ * spamming the AVR's control channel when broadcasts ARE working (this
+ * timer resets on every real received line, so it mostly doesn't fire at
+ * all in that case). */
+#define DENON_STATUS_POLL_INTERVAL_US ((int64_t)3 * 1000 * 1000)
+
+/* See denon_service_state.h's own comment on consecutive_silent_poll_
+ * rounds. 3: matches this exact bug's own real-hardware investigation --
+ * 3 rounds (an immediate query plus two more 3s-spaced ones, ~6-7s total)
+ * was already enough there to conclusively show a fresh connection getting
+ * zero replies to anything, including from a second, entirely independent
+ * client. Long enough that a single transient blip doesn't flap the link,
+ * short enough not to leave a genuinely wedged connection stuck
+ * indefinitely, which is what happened before this existed at all. */
+#define DENON_SILENT_POLL_ROUNDS_BEFORE_RECONNECT 3
+
 static denon_transport_if_t *active_transport(svc_denon_t *d, denon_link_state_t s)
 {
     if (s == DENON_LINK_STATE_CONNECTED_TELNET) return &d->telnet_iface;
@@ -130,6 +149,47 @@ bool denon_service_io_tick(svc_denon_t *d)
     }
 
     int64_t now = d->clock.now_us(d->clock.ctx);
+
+    if (now >= d->state.next_status_poll_due_us) {
+        d->state.consecutive_silent_poll_rounds++;
+        if (d->state.consecutive_silent_poll_rounds >= DENON_SILENT_POLL_ROUNDS_BEFORE_RECONNECT) {
+            /* Real-world research (community reports of this exact Denon/
+             * Marantz HEOS-platform symptom, affecting the vendor's own
+             * apps too) confirms asking again on the SAME connection isn't
+             * enough -- the documented, working recovery is a real
+             * reconnect. Reuse the existing dead-link path rather than
+             * invent a second one: dispatch_link_lost() below fires
+             * DENON_LINK_EVT_TELNET_EOF, which denon_link_fsm.c already
+             * routes to an immediate HTTP fallback (ADR-0003 point 2) --
+             * a real, already-proven-on-hardware transport, not a new one
+             * -- and that same FSM's own DENON_LINK_EVT_PROMOTE_DUE
+             * mechanism retries telnet again ~60s later on its own, so
+             * recovery back to the fast path needs no new code here. */
+            d->state.consecutive_silent_poll_rounds = 0;
+            d->state.next_status_poll_due_us         = now + DENON_STATUS_POLL_INTERVAL_US;
+            dispatch_link_lost(d, s);
+            return true;   /* the active transport may have just changed --
+                                don't also pop/send/poll through it this same tick */
+        }
+
+        /* See denon_service_state.h's own comment on next_status_poll_
+         * due_us -- an active fallback for when the AVR isn't (or has
+         * stopped) proactively broadcasting state on this connection.
+         * Queued through the same discrete FIFO real user commands use
+         * (never reordered/dropped, bounded depth 8u -- 4 queries here
+         * leaves headroom for real commands queued the same tick); a
+         * transient full queue just means these are retried next tick,
+         * not lost forever, since this reschedules unconditionally below
+         * regardless of whether all four actually enqueued. */
+        xSemaphoreTake(d->cmdq_lock, portMAX_DELAY);
+        denon_cmdq_submit_discrete(&d->state.cmdq, "PW?");
+        denon_cmdq_submit_discrete(&d->state.cmdq, "MV?");
+        denon_cmdq_submit_discrete(&d->state.cmdq, "MU?");
+        denon_cmdq_submit_discrete(&d->state.cmdq, "SI?");
+        xSemaphoreGive(d->cmdq_lock);
+        d->state.next_status_poll_due_us = now + DENON_STATUS_POLL_INTERVAL_US;
+    }
+
     denon_cmd_t cmd;
     bool have_cmd;
 
@@ -158,6 +218,13 @@ bool denon_service_io_tick(svc_denon_t *d)
         dispatch_link_lost(d, s);
     } else if (pr == DENON_TRANSPORT_POLL_LINE) {
         ESP_LOGI(TAG, "recv: %s", line);
+        /* A real line arrived by whatever means (broadcast or a response
+         * to our own query) -- push the next active query back out, so
+         * this stays quiet while the link is actually delivering data, and
+         * clear the silent-rounds count so a real reply always cancels any
+         * reconnect that might otherwise be building toward. */
+        d->state.next_status_poll_due_us         = now + DENON_STATUS_POLL_INTERVAL_US;
+        d->state.consecutive_silent_poll_rounds = 0;
         handle_line(d, line);
     }
 

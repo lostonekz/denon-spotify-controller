@@ -22,7 +22,8 @@ corrected in Tier 8):
     body     20 / 400
     label    16 / 500
     meta     13 / 500  (IBM Plex Mono, not Archivo)
-    hero     34 / 700  (Art-forward Now Playing's on-image track title only)
+    meta_lg  15 / 500  (IBM Plex Mono -- Art-forward's volume numeral readout only)
+    hero     38 / 700  (Art-forward Now Playing's on-image track title only)
 
 Glyph set (UI_ARCHITECTURE.md §5.3b): Basic Latin + Latin-1 Supplement +
 Latin Extended-A, plus curly quotes/en-dash/em-dash/ellipsis (already
@@ -67,11 +68,15 @@ BPP = 4
 # (lv font symbol name, primary source font, size)
 FONTS = [
     ("ui_font_display", FONT_SOURCES / "Archivo-700.ttf", 44),
-    ("ui_font_hero",    FONT_SOURCES / "Archivo-700.ttf", 34),
+    ("ui_font_hero",    FONT_SOURCES / "Archivo-700.ttf", 38),   # Art-forward redesign:
+                                                                    # resized from 34px
     ("ui_font_title",   FONT_SOURCES / "Archivo-600.ttf", 30),
     ("ui_font_body",    FONT_SOURCES / "Archivo-400.ttf", 20),
     ("ui_font_label",   FONT_SOURCES / "Archivo-500.ttf", 16),
     ("ui_font_meta",    FONT_SOURCES / "IBMPlexMono-500.ttf", 13),
+    ("ui_font_meta_lg", FONT_SOURCES / "IBMPlexMono-500.ttf", 15),   # Art-forward
+                                                                        # redesign: volume
+                                                                        # numeral readout
 ]
 
 

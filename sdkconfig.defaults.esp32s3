@@ -74,18 +74,29 @@ CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 
-# --- LVGL heap (docs/MEMORY.md §1: "LVGL heap dedicated pool = 512 KiB") ---
-# LV_MEM_SIZE_KILOBYTES sizes LVGL's OWN static internal-SRAM array, used
-# for its allocator's bookkeeping regardless of where the real heap memory
-# comes from. An earlier version of this setting held it at 2 (Kconfig's
-# stated floor, "int... >= 2kB") on the theory that the real 512 KiB PSRAM
-# pool -- added separately via lv_mem_add_pool() once a live lv_init()
-# exists (components/ui/ui_app/ui_app.c) -- would cover everything else.
-# Real hardware (Phase 5 Tier 7) disproved that: lv_init() itself never
-# returned at 2 KiB -- its own internal bootstrap (default display/group/
-# style-cache setup) needs more than the floor before ui_app.c ever gets a
-# chance to call lv_mem_add_pool(). 24 KiB gives lv_init() real margin
-# without meaningfully reintroducing the internal-RAM pressure the old,
-# unconditional 64 KiB default caused -- the 512 KiB pool for actual
-# widget/render work still lives entirely in PSRAM.
+# --- LVGL heap ---
+# Art-forward redesign: switched from LVGL's builtin TLSF allocator to the
+# standard C library malloc/realloc/free. Real hardware confirmed a genuine,
+# reproducible bug in this exact combination -- lv_mem_add_pool() (the
+# mechanism ui_app.c previously used to hand LVGL a second, PSRAM-backed
+# pool on top of the small internal-RAM one below) returned NULL for EVERY
+# PSRAM address tried (confirmed at both 3 MiB and, in isolation, 64 KiB --
+# not a size problem), while the identical call against a plain internal-RAM
+# buffer succeeded immediately. Root cause not chased further inside TLSF's
+# own block-header/pool-registration internals (out of scope for this
+# redesign); CONFIG_SPIRAM_USE_MALLOC=y already makes ESP-IDF's own
+# malloc()/heap_caps allocator transparently span internal RAM + PSRAM
+# (confirmed: "Adding pool of 6592K of PSRAM memory to heap allocator" at
+# boot) -- switching LVGL's allocator backend to just call that directly
+# sidesteps the broken custom-pool path entirely, needs no lv_mem_add_pool()
+# call at all (removed from ui_app.c), and is exactly the well-supported
+# mechanism this project's own artwork/draw buffers already rely on.
+CONFIG_LV_USE_CLIB_MALLOC=y
+
+# LV_MEM_SIZE_KILOBYTES only matters for the builtin allocator (unused now,
+# left at its real, hard-won value in case CLIB malloc is ever reverted):
+# lv_init()'s own internal bootstrap (default display/group/style-cache
+# setup) was confirmed to need more than Kconfig's 2 KiB floor to even
+# return, and 24 KiB gave it real margin without reintroducing the old,
+# unconditional 64 KiB default's internal-RAM pressure.
 CONFIG_LV_MEM_SIZE_KILOBYTES=24

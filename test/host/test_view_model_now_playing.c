@@ -1,7 +1,16 @@
 /*
  * Host test for view_model_now_playing.c -- Phase 5 Tier 1. The full pure
- * builder against fixtures, including the artwork/playback track_id
- * staleness check (Phase 5 plan §1).
+ * builder against fixtures.
+ *
+ * Art-forward redesign: no longer takes artwork_state_t (its only
+ * consumer, the old per-track accent_rgb565 field, was removed -- see
+ * view_model_now_playing.h's own top comment) -- the accent-fallback tests
+ * that used to live here are gone with it. tone/volume_tone/denon_tone/
+ * power_on/device_name/show_bring_here coverage is gone too, for the same
+ * reason: their only consumers (a header device-name label, a power glyph,
+ * a "Bring Here" tap zone) were all removed live once pressing Play was
+ * confirmed to already wake the AVR -- see view_model_now_playing.h's own
+ * top comment.
  */
 #include <string.h>
 
@@ -30,6 +39,7 @@ static playback_state_t make_playing_track(void)
     strncpy(pb.artist, "The National", sizeof(pb.artist) - 1);
     strncpy(pb.album, "Boxer", sizeof(pb.album) - 1);
     strncpy(pb.track_id, "3JOVTQ5h8HGFnDdp4VT3MP", sizeof(pb.track_id) - 1);
+    strncpy(pb.device_id, "31fnkj2s6xr4tqhq5zfcqu2xdafa", sizeof(pb.device_id) - 1);
     strncpy(pb.device_name, "Living Room", sizeof(pb.device_name) - 1);
     pb.position_ms = 63500;
     pb.duration_ms = 127000;
@@ -37,32 +47,21 @@ static playback_state_t make_playing_track(void)
     return pb;
 }
 
-static artwork_state_t make_matching_artwork(const playback_state_t *pb)
-{
-    artwork_state_t art = { 0 };
-    art.meta.status            = LINK_STATUS_OK;
-    art.handle.slot             = 1;
-    art.handle.generation      = 7;
-    art.dominant_color_rgb565 = 0x1234;
-    strncpy(art.track_id, pb->track_id, sizeof(art.track_id) - 1);
-    return art;
-}
-
 static denon_state_t make_denon(void)
 {
     denon_state_t denon = { 0 };
     denon.meta.status      = LINK_STATUS_OK;
     denon.volume_half_db  = 105;   /* 52.5 dB */
+    denon.power_on              = true;
     return denon;
 }
 
 static void test_normal_playing_track(void)
 {
-    playback_state_t pb = make_playing_track();
-    artwork_state_t art = make_matching_artwork(&pb);
-    denon_state_t denon = make_denon();
+    playback_state_t pb    = make_playing_track();
+    denon_state_t     denon = make_denon();
 
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
+    now_playing_vm_t vm = view_model_now_playing_build(&pb, &denon, g_clock, false);
 
     TEST_ASSERT_EQUAL_STRING("Fake Empire", vm.title);
     TEST_ASSERT_EQUAL_STRING("The National", vm.artist);
@@ -72,58 +71,30 @@ static void test_normal_playing_track(void)
      * so remaining (127000-63500=63500ms) formats identically to elapsed. */
     TEST_ASSERT_EQUAL_STRING("-1:03", vm.remaining);
     TEST_ASSERT_EQUAL_UINT16(500, vm.progress_permille);
+    TEST_ASSERT_EQUAL_UINT32(127000, vm.duration_ms);
     TEST_ASSERT_TRUE(vm.is_playing);
     TEST_ASSERT_FALSE(vm.pending);
-    TEST_ASSERT_EQUAL(TONE_LIVE, vm.tone);
-    TEST_ASSERT_EQUAL_HEX16(0x1234, vm.accent_rgb565);
     TEST_ASSERT_EQUAL_STRING("52.5", vm.volume_display);
-    TEST_ASSERT_EQUAL(TONE_LIVE, vm.volume_tone);
-    TEST_ASSERT_EQUAL_STRING("Living Room", vm.device_name);
+    TEST_ASSERT_EQUAL_UINT16(105, vm.volume_half_db_raw);
+    TEST_ASSERT_TRUE(vm.has_active_device);
 }
 
 static void test_pending_flag_passes_through(void)
 {
-    playback_state_t pb = make_playing_track();
-    artwork_state_t art = make_matching_artwork(&pb);
-    denon_state_t denon = make_denon();
+    playback_state_t pb    = make_playing_track();
+    denon_state_t     denon = make_denon();
 
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, true);
+    now_playing_vm_t vm = view_model_now_playing_build(&pb, &denon, g_clock, true);
     TEST_ASSERT_TRUE(vm.pending);
-}
-
-static void test_no_artwork_handle_falls_back_to_default_accent(void)
-{
-    playback_state_t pb = make_playing_track();
-    artwork_state_t art = { 0 };   /* {0,0} handle -- "no artwork" */
-    denon_state_t denon = make_denon();
-
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
-    TEST_ASSERT_EQUAL_HEX16(0x8410, vm.accent_rgb565);
-}
-
-static void test_artwork_for_a_different_track_falls_back_to_default_accent(void)
-{
-    /* A held, genuinely-acquired handle -- but for the PREVIOUS track,
-     * not the one playing now. The two services publish independently;
-     * this is exactly the race #1 in Phase 5 plan §1 exists to guard
-     * against, at the view-model layer. */
-    playback_state_t pb = make_playing_track();
-    artwork_state_t art = make_matching_artwork(&pb);
-    strncpy(art.track_id, "some_other_track_id_entirely", sizeof(art.track_id) - 1);
-    denon_state_t denon = make_denon();
-
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
-    TEST_ASSERT_EQUAL_HEX16(0x8410, vm.accent_rgb565);
 }
 
 static void test_empty_title_falls_back_to_album(void)
 {
     playback_state_t pb = make_playing_track();
     pb.title[0] = '\0';
-    artwork_state_t art = make_matching_artwork(&pb);
     denon_state_t denon = make_denon();
 
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
+    now_playing_vm_t vm = view_model_now_playing_build(&pb, &denon, g_clock, false);
     TEST_ASSERT_EQUAL_STRING("Boxer", vm.title);
 }
 
@@ -132,45 +103,20 @@ static void test_empty_title_and_album_falls_back_to_unknown_track(void)
     playback_state_t pb = make_playing_track();
     pb.title[0] = '\0';
     pb.album[0] = '\0';
-    artwork_state_t art = make_matching_artwork(&pb);
     denon_state_t denon = make_denon();
 
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
+    now_playing_vm_t vm = view_model_now_playing_build(&pb, &denon, g_clock, false);
     TEST_ASSERT_EQUAL_STRING("Unknown Track", vm.title);
 }
 
-static void test_stale_playback_link_status_reflected_in_tone(void)
+static void test_empty_device_id_means_no_active_device(void)
 {
     playback_state_t pb = make_playing_track();
-    pb.meta.status = LINK_STATUS_STALE;
-    artwork_state_t art = make_matching_artwork(&pb);
+    pb.device_id[0] = '\0';
     denon_state_t denon = make_denon();
 
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
-    TEST_ASSERT_EQUAL(TONE_STALE, vm.tone);
-}
-
-static void test_empty_device_name_falls_back_to_no_device(void)
-{
-    playback_state_t pb = make_playing_track();
-    pb.device_name[0] = '\0';
-    artwork_state_t art = make_matching_artwork(&pb);
-    denon_state_t denon = make_denon();
-
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
-    TEST_ASSERT_EQUAL_STRING("No Device", vm.device_name);
-}
-
-static void test_denon_tone_is_independent_of_playback_tone(void)
-{
-    playback_state_t pb = make_playing_track();
-    artwork_state_t art = make_matching_artwork(&pb);
-    denon_state_t denon = make_denon();
-    denon.meta.status = LINK_STATUS_UNAVAILABLE;
-
-    now_playing_vm_t vm = view_model_now_playing_build(&pb, &art, &denon, g_clock, false);
-    TEST_ASSERT_EQUAL(TONE_LIVE, vm.tone);           /* playback is still fine */
-    TEST_ASSERT_EQUAL(TONE_OFFLINE, vm.volume_tone);  /* denon is not */
+    now_playing_vm_t vm = view_model_now_playing_build(&pb, &denon, g_clock, false);
+    TEST_ASSERT_FALSE(vm.has_active_device);
 }
 
 int main(void)
@@ -178,12 +124,8 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_normal_playing_track);
     RUN_TEST(test_pending_flag_passes_through);
-    RUN_TEST(test_no_artwork_handle_falls_back_to_default_accent);
-    RUN_TEST(test_artwork_for_a_different_track_falls_back_to_default_accent);
     RUN_TEST(test_empty_title_falls_back_to_album);
     RUN_TEST(test_empty_title_and_album_falls_back_to_unknown_track);
-    RUN_TEST(test_empty_device_name_falls_back_to_no_device);
-    RUN_TEST(test_stale_playback_link_status_reflected_in_tone);
-    RUN_TEST(test_denon_tone_is_independent_of_playback_tone);
+    RUN_TEST(test_empty_device_id_means_no_active_device);
     return UNITY_END();
 }

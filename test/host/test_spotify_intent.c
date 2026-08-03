@@ -101,6 +101,16 @@ static void test_set_volume_above_100_is_clamped(void)
     TEST_ASSERT_EQUAL(100, cmd.u.volume_pct);
 }
 
+static void test_seek(void)
+{
+    playback_intent_payload_t p = { .seek_position_ms = 63500 };
+    intent_t intent = make_intent(INTENT_DOMAIN_PLAYBACK, PLAYBACK_INTENT_SEEK, &p, sizeof(p));
+    spotify_api_cmd_t cmd;
+    TEST_ASSERT_EQUAL(SPOTIFY_INTENT_RESULT_OK, spotify_intent_to_cmd(&intent, &cmd));
+    TEST_ASSERT_EQUAL(SPOTIFY_API_CMD_SEEK, cmd.kind);
+    TEST_ASSERT_EQUAL_UINT32(63500, cmd.u.position_ms);
+}
+
 static void test_wrong_domain_rejected(void)
 {
     intent_t intent = make_intent(INTENT_DOMAIN_DENON, PLAYBACK_INTENT_PLAY, NULL, 0);
@@ -111,6 +121,21 @@ static void test_wrong_domain_rejected(void)
 static void test_unknown_kind_rejected(void)
 {
     intent_t intent = make_intent(INTENT_DOMAIN_PLAYBACK, 999, NULL, 0);
+    spotify_api_cmd_t cmd;
+    TEST_ASSERT_EQUAL(SPOTIFY_INTENT_RESULT_UNKNOWN_KIND, spotify_intent_to_cmd(&intent, &cmd));
+}
+
+static void test_resume_on_avr_not_handled_here(void)
+{
+    /* PLAYBACK_INTENT_RESUME_ON_AVR is real but deliberately NOT in this
+     * translator's switch -- it needs svc_spotify_t's own persisted AVR
+     * device-id pin, which this pure function has no access to, so
+     * spotify_service_task.c's handle_playback_intent() intercepts it
+     * before ever calling here (see playback_intent_types.h's own comment
+     * on this kind). This pins that contract: if a caller reaches this
+     * function with it anyway, the answer is still a clean rejection, not
+     * a crash or a silently wrong command. */
+    intent_t intent = make_intent(INTENT_DOMAIN_PLAYBACK, PLAYBACK_INTENT_RESUME_ON_AVR, NULL, 0);
     spotify_api_cmd_t cmd;
     TEST_ASSERT_EQUAL(SPOTIFY_INTENT_RESULT_UNKNOWN_KIND, spotify_intent_to_cmd(&intent, &cmd));
 }
@@ -133,8 +158,10 @@ int main(void)
     RUN_TEST(test_set_repeat);
     RUN_TEST(test_set_volume_in_range);
     RUN_TEST(test_set_volume_above_100_is_clamped);
+    RUN_TEST(test_seek);
     RUN_TEST(test_wrong_domain_rejected);
     RUN_TEST(test_unknown_kind_rejected);
+    RUN_TEST(test_resume_on_avr_not_handled_here);
     RUN_TEST(test_null_args_rejected);
     return UNITY_END();
 }

@@ -58,6 +58,7 @@ dsc_add_host_test(test_denon_codec
     "${REPO_ROOT}/components/svc_denon/denon_codec.c")
 target_include_directories(test_denon_codec PRIVATE
     "${REPO_ROOT}/components/svc_denon/include"
+    "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
 dsc_add_host_test(test_denon_codec_tables
@@ -65,6 +66,7 @@ dsc_add_host_test(test_denon_codec_tables
     "${REPO_ROOT}/components/svc_denon/denon_codec_tables.c")
 target_include_directories(test_denon_codec_tables PRIVATE
     "${REPO_ROOT}/components/svc_denon/include"
+    "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
 dsc_add_host_test(test_denon_cmdq
@@ -467,13 +469,6 @@ dsc_add_host_test(test_view_model_text
     test_view_model_text.c
     "${REPO_ROOT}/components/ui/view_model/view_model_text.c")
 target_include_directories(test_view_model_text PRIVATE
-    "${REPO_ROOT}/components/ui/include"
-    "${CMAKE_CURRENT_LIST_DIR}")
-
-dsc_add_host_test(test_view_model_scrim
-    test_view_model_scrim.c
-    "${REPO_ROOT}/components/ui/view_model/view_model_scrim.c")
-target_include_directories(test_view_model_scrim PRIVATE
     "${REPO_ROOT}/components/ui/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 

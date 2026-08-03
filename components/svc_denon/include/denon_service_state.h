@@ -72,6 +72,47 @@ typedef struct {
 
     denon_state_t local_state;   /* mirror of the last value written to core_state -- delta detection for events */
 
+    /* Real bug, found live: this project's whole design (ADR-0003) assumed
+     * the AVR proactively broadcasts every state change to every connected
+     * telnet client -- verified true on real hardware in Phase 3. Real-
+     * hardware testing later in the same session found a live counter-
+     * example: a long-idle connection that kept sending commands
+     * successfully (the AVR's volume/power genuinely changed) while never
+     * receiving a single broadcast line back, for the connection's entire
+     * ~23-minute lifetime -- confirmed by direct inspection of denon_
+     * telnet.c's poll() (correct, no client-side receive bug) and the link
+     * FSM (never transitioned away from CONNECTED_TELNET, so nothing
+     * detected this as a dead link either). Whatever the AVR-side or
+     * network-side cause, this codebase had no fallback: broadcast-only,
+     * no active query. next_status_poll_due_us (denon_service_io.c) tracks
+     * when to next actively ask ("PW?"/"MV?"/"MU?"/"SI?") rather than
+     * waiting indefinitely on a broadcast that may never come -- reset
+     * whenever a real line actually arrives, so this stays quiet while
+     * broadcasts are flowing normally and only kicks in when they aren't.
+     * Zero-initialized by memset in _init()/_reset() below -- 0 means
+     * "due immediately," so a fresh/restarted link queries right away
+     * rather than waiting a full interval for its first real state. */
+    int64_t next_status_poll_due_us;
+
+    /* Real-world research (community reports of this exact symptom on
+     * Denon/Marantz's shared HEOS control platform -- their own mobile
+     * apps affected too, not something specific to this codebase) confirms
+     * the active-poll queries above can go unanswered indefinitely: the
+     * receiver's control service can wedge in a way a client-side query
+     * alone can't unstick -- the documented, working recovery is a real
+     * reconnect, not just asking again on the same socket. Counts
+     * consecutive DENON_STATUS_POLL_INTERVAL_US rounds with zero real
+     * lines received; once it crosses DENON_SILENT_POLL_ROUNDS_BEFORE_
+     * RECONNECT (denon_service_io.c), that file dispatches DENON_LINK_EVT_
+     * TELNET_EOF itself -- the same event a real detected socket failure
+     * already uses, falling back to the already-proven HTTP transport
+     * immediately (denon_link_fsm.c's own DENON_LINK_EVT_PROMOTE_DUE
+     * mechanism retries telnet again ~60s later on its own, no new code
+     * needed for that half). Reset to 0 alongside next_status_poll_due_us
+     * whenever a real line arrives. Zero-initialized by memset, matching
+     * that field. */
+    int consecutive_silent_poll_rounds;
+
     /* Cross-boundary results from denon_service_link.c's actions, and its
      * own backoff/promotion timers -- see that file's top comment for why
      * an action cannot safely dispatch back into the FSM itself. */

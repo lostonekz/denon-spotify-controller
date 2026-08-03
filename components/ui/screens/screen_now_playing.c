@@ -1,67 +1,67 @@
 #include "screen_now_playing.h"
 
+#include "esp_log.h"
+
 #include "theme_colors.h"
 #include "theme_fonts.h"
 #include "theme_metrics.h"
-#include "view_model_text.h"
 
-/* now_playing_vm_t.accent_rgb565 is a packed RGB565 uint16_t (theme_tokens.h's
- * own convention: R bits 15..11, G bits 10..5, B bits 4..0) -- LVGL 9's
- * lv_color_t is always a plain {blue,green,red} byte-triple struct
- * regardless of LV_COLOR_DEPTH (confirmed directly against lv_color.h;
- * LV_COLOR_DEPTH only affects the display buffer's own storage format),
- * so this needs an explicit unpack, not a reinterpret-cast. */
-static lv_color_t rgb565_to_lv_color(uint16_t rgb565)
-{
-    uint8_t r5 = (uint8_t)((rgb565 >> 11) & 0x1Fu);
-    uint8_t g6 = (uint8_t)((rgb565 >> 5) & 0x3Fu);
-    uint8_t b5 = (uint8_t)(rgb565 & 0x1Fu);
-    return lv_color_make((uint8_t)(r5 * 255u / 31u), (uint8_t)(g6 * 255u / 63u), (uint8_t)(b5 * 255u / 31u));
-}
+/* Every widget-build step below is null-checked and propagates failure the
+ * same way w_art_card_create() already did before this redesign -- real,
+ * not just defensive: a genuine LVGL allocation-failure bug was found and
+ * fixed on real hardware during this same redesign (see sdkconfig.defaults.
+ * esp32s3's CONFIG_LV_USE_CLIB_MALLOC comment), and a NULL return here used
+ * to crash instead of failing cleanly. Logged, not silent, so a future
+ * regression shows up as a clear boot-time error instead of a blank screen. */
+static const char *TAG = "screen_now_playing";
+#define DIAG_FAIL(step) ESP_LOGE(TAG, "%s returned NULL -- LVGL object allocation failed", step)
 
-/* Real bug, found live (real-hardware report): a fixed pixel height, not
- * LV_SIZE_CONTENT -- LV_SIZE_CONTENT means this stack's own height is
- * recomputed from its children's sizes on every relayout, and
- * now_playing_update() rewrites the progress bar's value and elapsed/
- * remaining time labels every single UI-task tick (interpolated smoothly
- * while playing), not just when their displayed text visibly changes.
- * Combined with lv_obj_align(..., LV_ALIGN_BOTTOM_MID, ...) below -- which
- * positions this box relative to its OWN height -- any per-tick recompute
- * of that height (even a sub-pixel one) shifts the whole box, and
- * everything in it, vertically. This matched the reported symptom exactly:
- * the art card (touched only on a real track change, per w_art_card.c's own
- * no-op-unless-changed contract) stayed rock stable, while this stack's
- * children (updated every tick) visibly jumped to a different vertical
- * anchor each frame. A fixed height removes the recompute dependency
- * entirely; LV_FLEX_ALIGN_END on the main axis (below, unchanged) still
- * packs real content against the BOTTOM of this box exactly as before, so
- * normal appearance is unaffected as long as the fixed height comfortably
- * exceeds real content height (it does, with real margin -- see the
- * constant's own sizing below). */
-#define NOW_PLAYING_BOTTOM_STACK_HEIGHT 240   /* hero title (~34px) + gap + artist
-                                                  (~30px) + gap + progress block
-                                                  (bar + time row, ~24px) + gap +
-                                                  transport row (THEME_TOUCH_MIN,
-                                                  56px) + gaps (3x THEME_SPACE_S)
-                                                  is ~170px of real content;
-                                                  240px leaves real margin for
-                                                  font ascent/descent and any
-                                                  future content growth without
-                                                  ever needing to be exact */
+/* Real bug, found live on real hardware (Phase 5 Tier 7 report): a fixed
+ * pixel height, not LV_SIZE_CONTENT -- LV_SIZE_CONTENT means this stack's
+ * own height is recomputed from its children's sizes on every relayout,
+ * and now_playing_update() rewrites the progress bar's value every single
+ * UI-task tick (interpolated smoothly while playing), not just when its
+ * displayed text visibly changes. Combined with lv_obj_align(...,
+ * LV_ALIGN_BOTTOM_MID, ...) below -- which positions this box relative to
+ * its OWN height -- any per-tick recompute of that height (even a
+ * sub-pixel one) shifts the whole box, and everything in it, vertically.
+ * A fixed height removes the recompute dependency entirely.
+ *
+ * Tightened live, per feedback asking for more of the screen's top half
+ * to be unobstructed artwork: title+artist ~68px + scrub-with-timestamps
+ * ~25px + transport 80px + volume 56px hit band + 4 gaps (title-artist,
+ * artist-scrub, scrub-transport, transport-volume) at the new tighter
+ * THEME_SPACE_S (8px, was THEME_SPACE_M/16px) = ~261px of real content.
+ * 265px keeps a little real margin without needing to be exact -- same
+ * reasoning the previous value used, just recomputed for the new spacing.
+ * Transport's 80px circle and volume's 56px hit band are real touch
+ * targets, not shrunk here -- the tightening is gaps/margins only, so
+ * nothing got harder to hit. */
+#define NOW_PLAYING_CONTENT_COLUMN_HEIGHT 265
 
-static lv_obj_t *make_bottom_stack(lv_obj_t *parent)
+static lv_obj_t *make_content_column(lv_obj_t *parent)
 {
     lv_obj_t *stack = lv_obj_create(parent);
+    if (stack == NULL) {
+        DIAG_FAIL("make_content_column root");
+        return NULL;
+    }
     lv_obj_remove_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(stack, 0, 0);
     lv_obj_set_style_pad_all(stack, 0, 0);
-    lv_obj_set_style_pad_row(stack, THEME_SPACE_S, 0);
+    lv_obj_set_style_pad_row(stack, THEME_SPACE_S, 0);   /* was THEME_SPACE_M (16px) -- tightened
+                                                              live, see NOW_PLAYING_CONTENT_COLUMN_
+                                                              HEIGHT's own comment */
     lv_obj_set_flex_flow(stack, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(stack, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_width(stack, LV_PCT(88));
-    lv_obj_set_height(stack, NOW_PLAYING_BOTTOM_STACK_HEIGHT);
-    lv_obj_align(stack, LV_ALIGN_BOTTOM_MID, 0, -THEME_SPACE_L);
+    lv_obj_set_flex_align(stack, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_width(stack, lv_pct(100));
+    lv_obj_set_height(stack, NOW_PLAYING_CONTENT_COLUMN_HEIGHT);
+    lv_obj_align(stack, LV_ALIGN_BOTTOM_MID, 0, -THEME_SPACE_S);   /* was -THEME_SPACE_L (24px) --
+                                                                        pulled closer to the true
+                                                                        bottom edge, same request */
+    lv_obj_set_style_pad_left(stack, THEME_SPACE_L, 0);
+    lv_obj_set_style_pad_right(stack, THEME_SPACE_L, 0);
     return stack;
 }
 
@@ -71,6 +71,10 @@ static lv_obj_t *now_playing_create(screen_ctx_t *ctx)
 
     lv_obj_t *root = lv_obj_create(ctx->parent);   /* NOT lv_obj_create(NULL) -- see
                                                        * screen_ctx_t.parent's own comment */
+    if (root == NULL) {
+        DIAG_FAIL("now_playing_create root");
+        return NULL;
+    }
     lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(root, THEME_COLOR_BG, 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
@@ -88,61 +92,71 @@ static lv_obj_t *now_playing_create(screen_ctx_t *ctx)
 
     w_art_card_cfg_t art_cfg = { .artwork_pixels = np->artwork_pixels };
     if (w_art_card_create(root, &np->art_card, &art_cfg) == NULL) {
-        return NULL;   /* pixel buffer allocation failed -- propagate the
-                           failure, same as any other screen-build failure */
-    }
-
-    /* Top-right overlay slot: originally a live clock (Tier 6). Replaced
-     * (user request, Tier 7 UI polish pass) with the active Spotify Connect
-     * device name -- closer to the design system's own original intent for
-     * this slot ("room name, mono/uppercase + live clock") than a clock
-     * alone ever was, since "which device is currently playing" is real
-     * data core_state already has (playback_state_t.device_name) where no
-     * room-name field exists anywhere. Read-only display -- a tap-to-switch
-     * device picker was built and confirmed working, then explicitly
-     * descoped by the user; kept as a plain, non-interactive label. */
-    np->device_label = lv_label_create(root);
-    lv_obj_set_style_text_font(np->device_label, &ui_font_meta, 0);
-    lv_obj_set_style_text_color(np->device_label, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(np->device_label, LV_ALIGN_TOP_RIGHT, -THEME_SPACE_L, THEME_SPACE_L);
-
-    if (w_status_pill_create(root, &np->status_pill) == NULL) {
+        DIAG_FAIL("w_art_card_create");   /* pixel buffer allocation failed -- propagate
+                                              the failure, same as any other
+                                              screen-build failure */
         return NULL;
     }
-    lv_obj_align(np->status_pill.root, LV_ALIGN_TOP_LEFT, THEME_SPACE_L, THEME_SPACE_L);
 
-    lv_obj_t *stack = make_bottom_stack(root);
+    /* No header control anymore -- the power glyph and the "Bring Here"
+     * tap zone were both removed per live feedback: pressing Play already
+     * wakes the AVR, switches to the HEOS Music input, and resumes
+     * playback there when nothing's active (w_transport.c's on_play_
+     * pause_clicked(), PLAYBACK_INTENT_RESUME_ON_AVR) -- confirmed working
+     * end to end on real hardware, making a separate standing "turn it on"
+     * control in the top-left redundant. w_power_glyph.c/.h stay in the
+     * codebase, unused, as real Phase 6 Receiver-screen infrastructure
+     * (same "kept for a real planned future caller" precedent as w_status_
+     * pill.c). now_playing_vm_t.device_name/show_bring_here and the intent-
+     * submission plumbing this used are gone too -- see view_model_now_
+     * playing.h's own comment. */
+    lv_obj_t *stack = make_content_column(root);
+    if (stack == NULL) {
+        DIAG_FAIL("content column");
+        return NULL;
+    }
 
-    w_marquee_label_cfg_t title_cfg = { .font = &ui_font_hero, .color = THEME_COLOR_TEXT_PRIMARY, .width = LV_PCT(100) };
-    w_marquee_label_create(stack, &np->title_label, &title_cfg);
+    w_marquee_label_cfg_t title_cfg = { .font = &ui_font_hero, .color = THEME_COLOR_TEXT_ONIMAGE, .width = lv_pct(100) };
+    if (w_marquee_label_create(stack, &np->title_label, &title_cfg) == NULL) {
+        DIAG_FAIL("title marquee");
+        return NULL;
+    }
 
-    np->artist_label = lv_label_create(stack);
-    /* Same family as the hero title (ui_font_title is Archivo 600, same
-     * family as ui_font_hero's Archivo 700 -- just a smaller size/lighter
-     * weight, per user request). Explicit width + LEFT align, matching
-     * title_cfg's own width=LV_PCT(100): the stack's shared flex cross-axis
-     * align is CENTER (make_bottom_stack()), which only affects children
-     * that DON'T span the full stack width -- giving artist_label the same
-     * full width as the title takes it out of that centering the same way,
-     * without touching the stack's shared alignment (which progress_bar/
-     * transport still rely on being CENTER-safe-for-100%-width). */
-    lv_obj_set_style_text_font(np->artist_label, &ui_font_title, 0);
-    lv_obj_set_style_text_color(np->artist_label, THEME_COLOR_TEXT_SECONDARY, 0);
-    lv_obj_set_style_text_align(np->artist_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_width(np->artist_label, LV_PCT(100));
+    /* "The National at 20/400, same white and stroke [as the title]" --
+     * ui_font_body is exactly 20/400 Archivo, no new font bake needed
+     * (swapped from the pre-redesign ui_font_title/30-600). 2px stroke,
+     * matching the title's own genuine-stroke treatment, not the 1px
+     * mono/meta-class value. */
+    w_stroke_label_cfg_t artist_cfg = {
+        .font = &ui_font_body, .color = THEME_COLOR_TEXT_ONIMAGE,
+        .width = lv_pct(100), .text_align = LV_TEXT_ALIGN_LEFT, .offset_px = 2,
+    };
+    if (w_stroke_label_create(stack, &np->artist_label, &artist_cfg) == NULL) {
+        DIAG_FAIL("artist_label stroke");
+        return NULL;
+    }
 
-    w_progress_bar_cfg_t progress_cfg = { .width = LV_PCT(100) };
-    w_progress_bar_create(stack, &np->progress_bar, &progress_cfg);
+    w_progress_bar_cfg_t progress_cfg = { .width = lv_pct(100), .intent_submit = np->intent_submit };
+    if (w_progress_bar_create(stack, &np->progress_bar, &progress_cfg) == NULL) {
+        DIAG_FAIL("progress_bar");
+        return NULL;
+    }
 
-    w_transport_cfg_t transport_cfg = { .intent_submit = np->intent_submit };
-    w_transport_create(stack, &np->transport, &transport_cfg);
+    w_transport_cfg_t transport_cfg = { .intent_submit = np->intent_submit, .intent_submit_raw = np->intent_submit_raw };
+    if (w_transport_create(stack, &np->transport, &transport_cfg) == NULL) {
+        DIAG_FAIL("transport");
+        return NULL;
+    }
 
-    np->volume_label = lv_label_create(root);
-    lv_obj_set_style_text_font(np->volume_label, &ui_font_meta, 0);
-    lv_obj_set_style_text_color(np->volume_label, THEME_COLOR_TEXT_TERTIARY, 0);
-    lv_obj_align(np->volume_label, LV_ALIGN_BOTTOM_RIGHT, -THEME_SPACE_L, -(THEME_SPACE_L + THEME_TOUCH_MIN / 2 - 8));
+    w_volume_slider_cfg_t volume_cfg = { .intent_submit = np->intent_submit_raw };
+    if (w_volume_slider_create(stack, &np->volume, &volume_cfg) == NULL) {
+        DIAG_FAIL("volume_slider");
+        return NULL;
+    }
+    lv_obj_set_width(np->volume.row, lv_pct(100));
 
     if (w_toast_create(root, &np->toast) == NULL) {
+        DIAG_FAIL("toast");
         return NULL;
     }
 
@@ -159,19 +173,14 @@ static void now_playing_update(screen_ctx_t *ctx, const void *vm)
     const screen_now_playing_update_t *u  = (const screen_now_playing_update_t *)vm;
 
     w_marquee_label_set_text(&np->title_label, u->vm.title);
-    lv_label_set_text(np->artist_label, u->vm.artist);
+    w_stroke_label_set_text(&np->artist_label, u->vm.artist);
 
-    lv_color_t accent = rgb565_to_lv_color(u->vm.accent_rgb565);
-    w_progress_bar_set_progress(&np->progress_bar, u->vm.progress_permille, u->vm.elapsed, u->vm.remaining, accent);
-    w_transport_set_state(&np->transport, u->vm.is_playing, u->vm.pending);
-    w_status_pill_set_tone(&np->status_pill, u->vm.tone);
+    w_progress_bar_set_progress(&np->progress_bar, u->vm.progress_permille, u->vm.elapsed, u->vm.remaining,
+                                    u->vm.duration_ms);
+    w_transport_set_state(&np->transport, u->vm.is_playing, u->vm.pending, u->vm.has_active_device);
     w_art_card_set_artwork(&np->art_card, u->artwork_handle, u->playback_track_id, u->artwork_track_id);
 
-    lv_label_set_text(np->volume_label, u->vm.volume_display);
-    lv_obj_set_style_text_color(np->volume_label,
-                                  (u->vm.volume_tone == TONE_LIVE) ? THEME_COLOR_TEXT_SECONDARY : THEME_COLOR_TEXT_TERTIARY, 0);
-
-    lv_label_set_text(np->device_label, u->vm.device_name);
+    w_volume_slider_set_value(&np->volume, u->vm.volume_half_db_raw, u->vm.volume_display);
 }
 
 screen_if_t screen_now_playing_get_interface(void)

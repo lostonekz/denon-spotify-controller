@@ -32,11 +32,12 @@ static const char *TAG = "spotify_api";
 
 static bool do_request(net_http_t *http, const http_policy_t *policy, const char *url,
                           net_http_method_t method, const char *access_token, bool retryable,
-                          char *out_buf, size_t out_cap, net_http_response_t *resp)
+                          net_http_body_t body, char *out_buf, size_t out_cap, net_http_response_t *resp)
 {
     net_http_request_opts_t opts = {
         .method               = method,
         .bearer_token         = access_token,
+        .body                 = body,
         .retryable_after_send = retryable,
     };
     return net_http_request(http, url, &opts, policy, out_buf, out_cap, resp);
@@ -53,7 +54,7 @@ spotify_api_result_t spotify_api_get_player_state(net_http_t *http, const http_p
 
     net_http_response_t resp = { 0 };
     if (!do_request(http, policy, SPOTIFY_API_BASE, NET_HTTP_METHOD_GET, access_token, true,
-                       buf, SPOTIFY_PLAYER_STATE_BUF_BYTES, &resp)) {
+                       (net_http_body_t){ 0 }, buf, SPOTIFY_PLAYER_STATE_BUF_BYTES, &resp)) {
         heap_caps_free(buf);
         return SPOTIFY_API_RESULT_FAILED;
     }
@@ -96,7 +97,7 @@ spotify_api_result_t spotify_api_get_devices(net_http_t *http, const http_policy
 
     net_http_response_t resp = { 0 };
     if (!do_request(http, policy, SPOTIFY_API_BASE "/devices", NET_HTTP_METHOD_GET, access_token, true,
-                       buf, SPOTIFY_DEVICES_BUF_BYTES, &resp)) {
+                       (net_http_body_t){ 0 }, buf, SPOTIFY_DEVICES_BUF_BYTES, &resp)) {
         heap_caps_free(buf);
         return SPOTIFY_API_RESULT_FAILED;
     }
@@ -172,6 +173,13 @@ spotify_api_result_t spotify_api_execute_cmd(net_http_t *http, const http_policy
         method = NET_HTTP_METHOD_PUT;
         retryable = true;
         break;
+    case SPOTIFY_API_CMD_SEEK:
+        snprintf(url, sizeof(url), "%s/seek?position_ms=%u", SPOTIFY_API_BASE,
+                  (unsigned)cmd->u.position_ms);
+        method = NET_HTTP_METHOD_PUT;
+        retryable = true;   /* idempotent -- setting position to X is safe to retry,
+                                same reasoning as SET_VOLUME just above */
+        break;
     default:
         return SPOTIFY_API_RESULT_FAILED;
     }
@@ -179,11 +187,56 @@ spotify_api_result_t spotify_api_execute_cmd(net_http_t *http, const http_policy
     char buf[256];
     net_http_response_t resp = { 0 };
     if (!do_request(http, policy, url, method, access_token, retryable,
-                       buf, sizeof(buf), &resp)) {
+                       (net_http_body_t){ 0 }, buf, sizeof(buf), &resp)) {
         return SPOTIFY_API_RESULT_FAILED;
     }
     if (resp.status_code == 401) {
         return SPOTIFY_API_RESULT_UNAUTHORIZED;
+    }
+    if (resp.status_code < 200 || resp.status_code >= 300) {
+        return SPOTIFY_API_RESULT_FAILED;
+    }
+    return SPOTIFY_API_RESULT_OK;
+}
+
+/* PUT /v1/me/player (no trailing path segment -- distinct from every other
+ * command above, which all target a sub-path) with a JSON body, the one
+ * call in this file that needs one. device_id is a Spotify-generated
+ * opaque token (spotify_avr_pin_t.avr_device_id, persisted via `spotify
+ * set-avr-device`), not user-authored text -- built with a plain snprintf
+ * template, no JSON escaping needed, same trust level this codebase's own
+ * PKCE code/state handling already assumes. play=true resumes whatever
+ * context/track was last active on the target device -- exactly what
+ * w_transport's "nothing is playing anywhere, wake the AVR and resume"
+ * path needs, without this function or its caller needing to know or
+ * remember what that was. */
+spotify_api_result_t spotify_api_transfer_playback(net_http_t *http, const http_policy_t *policy,
+                                                        const char *access_token, const char *device_id,
+                                                        bool play)
+{
+    char body_json[128];
+    int written = snprintf(body_json, sizeof(body_json), "{\"device_ids\":[\"%s\"],\"play\":%s}",
+                              device_id, play ? "true" : "false");
+    if (written < 0 || (size_t)written >= sizeof(body_json)) {
+        return SPOTIFY_API_RESULT_FAILED;
+    }
+    net_http_body_t body = {
+        .content_type = "application/json",
+        .body         = body_json,
+        .body_len     = (size_t)written,
+    };
+
+    char buf[256];
+    net_http_response_t resp = { 0 };
+    if (!do_request(http, policy, SPOTIFY_API_BASE, NET_HTTP_METHOD_PUT, access_token, true,
+                       body, buf, sizeof(buf), &resp)) {
+        return SPOTIFY_API_RESULT_FAILED;
+    }
+    if (resp.status_code == 401) {
+        return SPOTIFY_API_RESULT_UNAUTHORIZED;
+    }
+    if (resp.status_code == 404) {
+        return SPOTIFY_API_RESULT_NO_ACTIVE_DEVICE;   /* the pinned device id itself is gone/unreachable */
     }
     if (resp.status_code < 200 || resp.status_code >= 300) {
         return SPOTIFY_API_RESULT_FAILED;

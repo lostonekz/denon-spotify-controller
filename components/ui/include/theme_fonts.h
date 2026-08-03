@@ -14,11 +14,16 @@ extern "C" {
 #endif
 
 extern const lv_font_t ui_font_display;   /* 44 px / 700 */
-extern const lv_font_t ui_font_hero;      /* 34 px / 700 -- Art-forward's on-image track title */
+extern const lv_font_t ui_font_hero;      /* 38 px / 700 -- Art-forward's on-image track title
+                                              (resized from 34px for the Art-forward redesign) */
 extern const lv_font_t ui_font_title;     /* 30 px / 600 */
-extern const lv_font_t ui_font_body;      /* 20 px / 400 */
+extern const lv_font_t ui_font_body;      /* 20 px / 400 -- Art-forward's on-image artist line */
 extern const lv_font_t ui_font_label;     /* 16 px / 500 */
 extern const lv_font_t ui_font_meta;      /* 13 px / 500, mono */
+extern const lv_font_t ui_font_meta_lg;   /* 15 px / 500, mono -- Art-forward's volume readout;
+                                              the VOL label itself reuses ui_font_meta rather
+                                              than baking a third near-duplicate mono size for
+                                              the spec's own 11px value */
 
 #ifdef __cplusplus
 }

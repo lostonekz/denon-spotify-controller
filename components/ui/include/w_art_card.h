@@ -1,10 +1,21 @@
 /*
- * Full-bleed album art + integrated adaptive scrim (UI_ARCHITECTURE.md §4;
- * Phase 5 plan §7: under Art-forward the card IS the backdrop, so a
- * separate w_backdrop is never built). Crossfades in (THEME_MOTION_SLOW)
- * over a neutral placeholder (plan §3) rather than popping; the scrim's
- * bottom-stop opacity adapts to the artwork's own bottom-band luma (plan
- * §5, view_model_scrim.h) so pale covers still read legibly.
+ * Full-bleed album art (UI_ARCHITECTURE.md §4; Phase 5 plan §7: under
+ * Art-forward the card IS the backdrop, so a separate w_backdrop is never
+ * built).
+ *
+ * Art-forward redesign: the adaptive scrim is REMOVED -- the design spec is
+ * explicit ("flat -- no scrim, no gradient, no vignette... every overlay
+ * carries its own black stroke for contrast" instead). view_model_scrim.c/
+ * .h (this widget's only call site) is deleted along with it, not left as
+ * unused-but-correct dead code (this codebase's own established
+ * precedent). Legibility against pale/high-frequency covers now rests
+ * entirely on w_stroke_label's black-stroke treatment -- a real, designer-
+ * flagged open risk, verified against a real pale cover on real hardware,
+ * not assumed solved.
+ *
+ * The "instant pop, not a smooth crossfade" real-hardware finding below
+ * (a 337ms single-frame stall from LVGL's alpha-compositing layer path)
+ * still applies and is unrelated to the scrim removal -- kept as-is.
  *
  * Copies pixels via artwork_pixel_provider_t.lock_copy() into a buffer this
  * widget owns (plan §1) -- never holds a pointer into svc_artwork's pool.
@@ -32,7 +43,6 @@ typedef struct {
     lv_obj_t         *root;
     lv_obj_t         *placeholder;
     lv_obj_t         *image;
-    lv_obj_t         *scrim;
     lv_image_dsc_t     img_dsc;
     uint16_t             *pixel_buf;   /* PSRAM-backed (heap_caps_malloc on target,
                                           * plain malloc on the host harness) --

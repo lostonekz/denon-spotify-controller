@@ -31,7 +31,19 @@ extern "C" {
 
 #define THEME_MOTION_INSTANT_MS   100   /* press feedback */
 #define THEME_MOTION_QUICK_MS     200   /* toggles, toasts */
-#define THEME_MOTION_STANDARD_MS  320   /* screen transitions */
+#define THEME_MOTION_STANDARD_MS  180   /* screen transitions -- was 320ms, reserved but never
+                                            wired up, until the Art-forward redesign's page-
+                                            edge-tab mechanism briefly became this constant's
+                                            first real consumer (repurposed to the design
+                                            system's own 180ms page-transition value). Real-
+                                            hardware feedback then found even that fixed,
+                                            one-shot animation choppy on this board's real
+                                            render path and asked for screen transitions to be
+                                            instant instead (ui_router_go_to_screen() now uses
+                                            LV_ANIM_OFF, no duration at all) -- unused again as
+                                            of that change, left defined/reserved rather than
+                                            deleted, same as it sat for most of this project's
+                                            history before this constant's brief real use. */
 #define THEME_MOTION_SLOW_MS      600   /* artwork crossfade */
 #define THEME_MOTION_AMBIENT_MS  1200   /* backdrop drift */
 

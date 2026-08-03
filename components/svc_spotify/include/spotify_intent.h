@@ -6,9 +6,11 @@
  * only), not a wire string -- Spotify's protocol is a set of distinct
  * HTTP endpoints, not a single text line format.
  *
- * No SEEK: NETWORKING.md §1.3's endpoint list omits `PUT .../seek`
- * entirely, and no scrub UI exists until Phase 5 -- cut explicitly, not
- * silently dropped (Phase 4 plan §5).
+ * SEEK: originally cut (Phase 4 plan §5 -- NETWORKING.md §1.3's endpoint
+ * list omitted `PUT .../seek`, and no scrub UI existed yet). Added once a
+ * real scrub UI did exist and was requested live -- Spotify's Web API has
+ * always had this endpoint (`PUT /v1/me/player/seek?position_ms=`), the
+ * omission was a scope decision, not a platform limitation.
  *
  * playback_intent_kind_t/playback_intent_payload_t moved to core_types
  * (Phase 5 Tier 6: `ui` needs these exact values to submit PLAY/PAUSE/
@@ -39,14 +41,16 @@ typedef enum {
     SPOTIFY_API_CMD_SET_SHUFFLE,
     SPOTIFY_API_CMD_SET_REPEAT,
     SPOTIFY_API_CMD_SET_VOLUME,
+    SPOTIFY_API_CMD_SEEK,
 } spotify_api_cmd_kind_t;
 
 typedef struct {
     spotify_api_cmd_kind_t kind;
     union {
-        bool    shuffle;        /* SET_SHUFFLE */
-        uint8_t repeat_mode;    /* SET_REPEAT */
-        uint8_t volume_pct;     /* SET_VOLUME -- already clamped to 0-100 */
+        bool     shuffle;        /* SET_SHUFFLE */
+        uint8_t  repeat_mode;    /* SET_REPEAT */
+        uint8_t  volume_pct;     /* SET_VOLUME -- already clamped to 0-100 */
+        uint32_t position_ms;    /* SEEK */
     } u;
 } spotify_api_cmd_t;
 

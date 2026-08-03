@@ -33,20 +33,6 @@ static const char *TAG = "ui_app";
  * flush_cb calls to cover, not a correctness problem. PSRAM-backed --
  * this project's own established home for buffers of this kind. */
 #define UI_APP_DRAW_BUF_ROWS     40
-/* MEMORY.md §1 originally documented 512 KiB. Real hardware (Phase 5 Tier 7)
- * found that too small: the very first real render (Art-forward Now
- * Playing's near-full-screen rounded/blended art card) still froze
- * ui_app_task forever inside lv_draw_layer_alloc_buf/lv_tlsf_malloc even
- * after the 512 KiB pool was actually wired up (LV_USE_ASSERT_MALLOC's
- * `while(1);` default handler again, not a clean failure). LVGL's software
- * renderer allocates compositing layer buffers in the LAYER's own color
- * format, not necessarily the display's -- a near-full-480x480 layer at
- * ARGB8888 (4 B/px, used internally for blend/opacity compositing) is
- * ~900 KiB, comfortably over the old figure even before accounting for the
- * widget tree and any second simultaneous layer. 2 MiB gives real margin
- * against that, still a small fraction of this board's 8 MiB PSRAM. */
-#define UI_APP_LVGL_POOL_BYTES   (2048 * 1024)
-
 /* Denon/Settings stay trivial stub screens until Phase 6 -- the design
  * system's own THEME_COLOR_SURFACE/SURFACE_HIGH tokens (theme_colors.h,
  * Tier 6), matching Now Playing's own THEME_COLOR_BG so all three read as
@@ -175,28 +161,16 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     app->has_rendered_frame = false;
     app->ui_diag_last_publish_us = 0;
 
+    /* Art-forward redesign: no custom heap_caps_malloc()+lv_mem_add_pool()
+     * dance here anymore -- see sdkconfig.defaults.esp32s3's own comment on
+     * CONFIG_LV_USE_CLIB_MALLOC for the real, confirmed-on-real-hardware
+     * reason (lv_mem_add_pool() reliably returned NULL for every PSRAM
+     * address tried, at every size tried, while the identical call against
+     * internal RAM succeeded). With the C-library allocator, lv_malloc()
+     * calls the standard malloc() directly, which CONFIG_SPIRAM_USE_MALLOC=y
+     * already transparently backs with PSRAM once internal RAM is
+     * exhausted -- lv_init() alone is enough. */
     lv_init();
-
-    /* sdkconfig.defaults.esp32s3's own comment on CONFIG_LV_MEM_SIZE_KILOBYTES
-     * documents this exactly: that setting is deliberately held at Kconfig's
-     * 2 KiB floor so LVGL's static internal-SRAM pool doesn't silently eat
-     * into the real, intended 512 KiB budget (MEMORY.md §1) -- which was
-     * always meant to be a SECOND pool, added here via lv_mem_add_pool(),
-     * once lv_init() first exists. That second call was never actually
-     * written until now -- confirmed by reading ui_app_create() itself,
-     * which only ever called lv_init() and nothing else. Left unfixed, LVGL
-     * has only ~2 KiB total for its entire object tree plus every draw/layer
-     * buffer -- real hardware (Phase 5 Tier 7) confirmed this OOMs on the
-     * very first render pass, and LV_USE_ASSERT_MALLOC's default handler
-     * (LV_ASSERT_HANDLER = `while(1);`) turns that into a permanent freeze
-     * of the ui_app task, not a clean failure -- explaining a lit, blank
-     * screen that never renders even one frame. */
-    void *lvgl_pool = heap_caps_malloc(UI_APP_LVGL_POOL_BYTES, MALLOC_CAP_SPIRAM);
-    if (lvgl_pool == NULL) {
-        ESP_LOGE(TAG, "LVGL PSRAM pool alloc failed");
-        return false;
-    }
-    lv_mem_add_pool(lvgl_pool, UI_APP_LVGL_POOL_BYTES);
 
     app->lv_disp = lv_display_create(app->hal_disp->h_res, app->hal_disp->v_res);
     if (app->lv_disp == NULL) {
@@ -254,6 +228,19 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
      * real tap, well after this function returns. */
     app->np_screen.artwork_pixels = cfg->artwork_pixels;
     app->np_screen.intent_submit  = view_model_now_playing_apply_intent_submit_provider(&app->np_apply);
+    /* w_volume_slider uses THIS raw provider, not the wrapped one above
+     * (w_power_glyph did too, before it and its header control were
+     * removed -- screen_now_playing.h's own top comment) -- a real bug
+     * found during the Art-forward redesign's own planning: the wrapped
+     * provider's wrapped_submit() sets a single screen-wide pending flag
+     * on every successful submit regardless of domain, which w_transport_
+     * set_state() reads to dim/disable the transport row. Denon volume is
+     * a different domain entirely and gives near-instant telnet-echoed
+     * feedback, unlike
+     * Spotify's poll-confirmed round trip that pending/toast machinery
+     * exists for -- routing it through that provider would visibly (and
+     * incorrectly) dim the transport row on every volume drag. */
+    app->np_screen.intent_submit_raw = cfg->intent_submit;
 
     if (!ui_router_register_screen(&app->router, UI_SCREEN_NOW_PLAYING, screen_now_playing_get_interface(), &app->np_screen) ||
         !ui_router_register_screen(&app->router, UI_SCREEN_DENON,       screen_stub_get_interface(), (void *)&s_stub_denon) ||

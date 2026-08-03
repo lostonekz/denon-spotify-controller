@@ -17,25 +17,14 @@
 #include <stdint.h>
 
 #include "app_state_types.h"
+#include "multi_intent_types.h"   /* multi_intent_kind_t/multi_intent_payload_t's
+                                      canonical definition -- moved to core_types
+                                      so `ui`'s w_volume_slider can construct
+                                      them too; see that header's own comment */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* intent_t.kind when intent_t.domain == INTENT_DOMAIN_MULTI. Today exactly
- * one case exists (adr/0007's volume retargeting) -- EVENTS_AND_STATE.md
- * §5.1's own framing: "a missing table entry is a startup assertion." */
-typedef enum {
-    MULTI_INTENT_SET_VOLUME = 0,
-} multi_intent_kind_t;
-
-typedef struct {
-    /* Denon's own half-dB scale -- the common path (target == DENON) is a
-     * zero-conversion pass-through into DENON_INTENT_SET_VOLUME; only the
-     * rare retarget case (target == PLAYBACK) pays an approximate
-     * half_db->pct conversion cost. See app_wiring_volume.c. */
-    uint16_t volume_half_db;
-} multi_intent_payload_t;
 
 typedef enum {
     VOLUME_TARGET_DENON = 0,

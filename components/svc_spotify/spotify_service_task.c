@@ -145,8 +145,44 @@ static void bump_force_poll(svc_spotify_t *s)
     s->state.force_poll_index = 0;
 }
 
+/* PLAYBACK_INTENT_RESUME_ON_AVR: "nothing is playing anywhere, wake the AVR
+ * and resume" -- see playback_intent_types.h's own comment on this kind.
+ * Bypasses spotify_intent_to_cmd() entirely: that translator is pure (no
+ * svc_spotify_t access, host-tested against a fixed intent->cmd mapping)
+ * and has no way to reach the persisted AVR device-id pin this needs, the
+ * same reasoning documented on spotify_api_transfer_playback() itself. */
+static void handle_resume_on_avr_intent(svc_spotify_t *s, const intent_t *intent)
+{
+    xSemaphoreTake(s->session_lock, portMAX_DELAY);
+    spotify_avr_pin_t pin = s->state.avr_pin;
+    xSemaphoreGive(s->session_lock);
+
+    if (pin.avr_device_id[0] == '\0') {
+        /* Never paired an AVR device id (`spotify set-avr-device`) -- a
+         * clean, real rejection, not a network failure, but surfaced the
+         * same way (REJECTED ack -> toast) since there's nothing more
+         * specific the existing ack machinery can say. */
+        publish_intent_ack(s, intent->seq, INTENT_ACK_EVT_REJECTED);
+        return;
+    }
+
+    spotify_api_result_t r = spotify_api_transfer_playback(s->http, &s->http_policy, s->state.access_token,
+                                                                pin.avr_device_id, true);
+    if (r == SPOTIFY_API_RESULT_UNAUTHORIZED) {
+        s->state.access_token_refresh_due_us = s->clock.now_us(s->clock.ctx);
+    }
+    publish_intent_ack(s, intent->seq, spotify_intent_ack_kind_for_result(r));
+    bump_force_poll(s);
+}
+
 static void handle_playback_intent(svc_spotify_t *s, const intent_t *intent)
 {
+    if (intent->domain == INTENT_DOMAIN_PLAYBACK &&
+        (playback_intent_kind_t)intent->kind == PLAYBACK_INTENT_RESUME_ON_AVR) {
+        handle_resume_on_avr_intent(s, intent);
+        return;
+    }
+
     spotify_api_cmd_t cmd;
     if (spotify_intent_to_cmd(intent, &cmd) != SPOTIFY_INTENT_RESULT_OK) {
         publish_intent_ack(s, intent->seq, INTENT_ACK_EVT_REJECTED);

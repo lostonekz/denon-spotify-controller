@@ -124,6 +124,10 @@ int main(int argc, char **argv)
     static screen_now_playing_ctx_t np_screen;
     np_screen.artwork_pixels = artwork_provider;
     np_screen.intent_submit  = view_model_now_playing_apply_intent_submit_provider(&np_apply);
+    np_screen.intent_submit_raw = intent_provider;   /* w_volume_slider -- same raw/
+                                                          unwrapped provider ui_app.c
+                                                          wires on target, see its own
+                                                          comment there */
 
     if (!ui_router_register_screen(&router, UI_SCREEN_NOW_PLAYING, screen_now_playing_get_interface(), &np_screen) ||
         !ui_router_register_screen(&router, UI_SCREEN_DENON,       screen_stub_get_interface(), &stub_denon) ||
@@ -138,7 +142,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("ui_harness: fixture '%s' loaded. Drag to page between screens; tap transport buttons to submit intents; close the window to quit.\n",
+    printf("ui_harness: fixture '%s' loaded. Tap a page-edge tab to switch screens; tap transport/volume/power controls to submit intents; close the window to quit.\n",
            ui_harness_fixture_name(fixture));
 
     /* No FreeRTOS task here -- LV_USE_OS is LV_OS_NONE (lv_conf.h), so this

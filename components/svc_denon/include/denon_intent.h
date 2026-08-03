@@ -16,32 +16,15 @@
 #include <stdint.h>
 
 #include "denon_cmdq.h"
+#include "denon_intent_types.h"   /* denon_intent_kind_t/denon_intent_payload_t's
+                                      canonical definition -- moved to core_types
+                                      so `ui`'s w_power_glyph can construct them
+                                      too; see that header's own comment */
 #include "intent_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* intent_t.kind when intent_t.domain == INTENT_DOMAIN_DENON. SET_VOLUME's
- * payload is an absolute half-dB target, not a delta -- matches
- * denon_codec.h's own representation and adr/0007's "the real analog
- * attenuator" framing. */
-typedef enum {
-    DENON_INTENT_SET_POWER = 0,
-    DENON_INTENT_SET_VOLUME,
-    DENON_INTENT_SET_MUTE,
-    DENON_INTENT_SET_INPUT,
-    DENON_INTENT_SET_LISTENING_MODE,
-} denon_intent_kind_t;
-
-/* Packed into intent_t.payload (16 B, plenty of room). */
-typedef struct {
-    bool power_on;               /* DENON_INTENT_SET_POWER */
-    uint16_t volume_half_db;     /* DENON_INTENT_SET_VOLUME -- pre-clamp; this file clamps */
-    bool muted;                  /* DENON_INTENT_SET_MUTE */
-    uint8_t input_id;            /* DENON_INTENT_SET_INPUT -- denon_input_id_t */
-    uint8_t listening_mode_id;   /* DENON_INTENT_SET_LISTENING_MODE -- denon_listening_mode_id_t */
-} denon_intent_payload_t;
 
 typedef enum {
     DENON_INTENT_RESULT_OK = 0,

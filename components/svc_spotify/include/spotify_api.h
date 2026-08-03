@@ -28,6 +28,16 @@ spotify_api_result_t spotify_api_get_devices(net_http_t *http, const http_policy
 spotify_api_result_t spotify_api_execute_cmd(net_http_t *http, const http_policy_t *policy,
                                                  const char *access_token, const spotify_api_cmd_t *cmd);
 
+/* PUT /v1/me/player {"device_ids":[device_id],"play":play} -- transfers
+ * playback to device_id; play=true resumes whatever context/track was
+ * last active there. Used by svc_spotify's own PLAYBACK_INTENT_RESUME_ON_AVR
+ * handling (spotify_service_task.c), not reachable through
+ * spotify_intent_to_cmd()/spotify_api_cmd_t -- that translator is pure and
+ * has no access to the persisted AVR device-id pin this needs. */
+spotify_api_result_t spotify_api_transfer_playback(net_http_t *http, const http_policy_t *policy,
+                                                        const char *access_token, const char *device_id,
+                                                        bool play);
+
 #ifdef __cplusplus
 }
 #endif

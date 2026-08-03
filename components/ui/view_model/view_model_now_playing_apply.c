@@ -107,7 +107,7 @@ void view_model_now_playing_apply_tick(view_model_now_playing_apply_t *a)
     core_state_read(a->state, DOMAIN_DENON, &denon, sizeof(denon));
 
     screen_now_playing_update_t u;
-    u.vm             = view_model_now_playing_build(&pb, &art, &denon, a->clock, a->pending);
+    u.vm             = view_model_now_playing_build(&pb, &denon, a->clock, a->pending);
     u.artwork_handle = art.handle;
     strncpy(u.artwork_track_id, art.track_id, sizeof(u.artwork_track_id) - 1);
     u.artwork_track_id[sizeof(u.artwork_track_id) - 1] = '\0';

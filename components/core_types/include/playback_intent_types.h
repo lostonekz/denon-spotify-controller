@@ -31,12 +31,32 @@ typedef enum {
     PLAYBACK_INTENT_SET_SHUFFLE,
     PLAYBACK_INTENT_SET_REPEAT,
     PLAYBACK_INTENT_SET_VOLUME,
+    /* payload.seek_position_ms -- PUT /v1/me/player/seek?position_ms=.
+     * Submitted once, on drag-release, not on every intermediate drag
+     * position (w_progress_bar.c) -- Spotify's real API has no local
+     * coalescing/rate-limiting the way Denon's cmdq gives volume drags for
+     * free, so firing one call per touch-move sample would hammer it. */
+    PLAYBACK_INTENT_SEEK,
+    /* No payload -- unlike PLAY, this is submitted specifically when
+     * playback_state_t.device_id is empty (nothing active anywhere), where
+     * a plain PLAY would just 404 against Spotify's own
+     * /v1/me/player/play (no device to target) and surface as a generic
+     * "Couldn't reach Spotify" rejection. svc_spotify resolves its own
+     * persisted AVR device-id pin (spotify_avr_pin_t, set independently of
+     * whatever's currently active) and calls the transfer-playback
+     * endpoint with play=true, which resumes whatever context/track was
+     * last active on that device -- the intent itself carries no track/
+     * context data because Spotify's own API remembers it. See
+     * w_transport.c's on_play_pause_clicked() for the paired Denon power-
+     * on + input-select submission this is meant to follow. */
+    PLAYBACK_INTENT_RESUME_ON_AVR,
 } playback_intent_kind_t;
 
 typedef struct {
     uint8_t  volume_pct;         /* PLAYBACK_INTENT_SET_VOLUME -- 0-100, clamped by spotify_intent.c */
     bool     shuffle;            /* PLAYBACK_INTENT_SET_SHUFFLE */
     uint8_t  repeat_mode;        /* PLAYBACK_INTENT_SET_REPEAT -- matches playback_state_t's representation */
+    uint32_t seek_position_ms;   /* PLAYBACK_INTENT_SEEK -- absolute position, not a delta */
 } playback_intent_payload_t;
 
 #ifdef __cplusplus

@@ -21,7 +21,11 @@
 extern "C" {
 #endif
 
-#define THEME_COLOR_BG              lv_color_hex(0x0A0A0C)   /* near-black, slightly cool */
+#define THEME_COLOR_BG              lv_color_hex(0x090C0A)   /* near-black, slightly cool --
+                                                                  oklch(0.15 0.006 160), the
+                                                                  design system's own frame-
+                                                                  base-fill token, computed via
+                                                                  theme_tokens_oklch_to_rgb565() */
 #define THEME_COLOR_SURFACE         lv_color_hex(0x141417)   /* cards */
 #define THEME_COLOR_SURFACE_HIGH    lv_color_hex(0x1F1F24)   /* raised / pressed */
 #define THEME_COLOR_TEXT_PRIMARY    lv_color_hex(0xF5F5F7)
@@ -40,6 +44,34 @@ extern "C" {
  * same Tier 8 reconciliation as the rest of this file. */
 #define THEME_COLOR_STALE           lv_color_hex(0xC9A227)   /* muted amber -- old, not broken */
 #define THEME_COLOR_DANGER          lv_color_hex(0xD9534F)   /* muted red -- offline / rejected */
+
+/* w_stroke_label's own black outline -- keeps overlay text legible against
+ * artwork of any brightness/color, independent of the scrim (which only
+ * covers the bottom band of the card, not the top-corner labels).
+ * Verified correct as-is against the design system's real OKLCH value
+ * (oklch(0.08 0 0) quantizes to exactly pure black, 0x0000, at this
+ * display's real RGB565 depth -- computed via theme_tokens_oklch_to_rgb565(),
+ * not eyeballed) during the Art-forward redesign's Tier 8 token pass below. */
+#define THEME_COLOR_TEXT_STROKE     lv_color_hex(0x000000)
+
+/* Art-forward redesign (Phase 5 addendum) -- real OKLCH -> RGB565 values,
+ * computed via theme_tokens_oklch_to_rgb565() (components/ui/theme/
+ * theme_tokens.c), not hand-picked. This is the Tier 8 reconciliation this
+ * file's own top comment has been flagging as pending since Tier 6. */
+#define THEME_COLOR_TEXT_ONIMAGE    lv_color_hex(0xE4E4E4)   /* oklch(0.92 0 0) -- header/
+                                                                  device-name text over full-
+                                                                  bleed art. Deliberately
+                                                                  distinct from
+                                                                  THEME_COLOR_TEXT_PRIMARY
+                                                                  (0xF5F5F7), ~17pt brighter --
+                                                                  not interchangeable */
+#define THEME_COLOR_ACCENT_LIVE     lv_color_hex(0x4ADD8C)   /* oklch(0.80 0.17 155) -- fixed
+                                                                  volume-track fill. NOT the old
+                                                                  per-track dynamic accent
+                                                                  (now_playing_vm_t.accent_rgb565,
+                                                                  removed by this redesign --
+                                                                  the scrub bar's fill is flat
+                                                                  white, not art-derived) */
 
 #ifdef __cplusplus
 }
