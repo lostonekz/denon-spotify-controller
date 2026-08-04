@@ -105,6 +105,10 @@ typedef struct {
                                                       * callback actually runs -- feeds
                                                       * HEALTH_COND_PANEL_UI (app_wiring_ui.c) */
 
+    uint32_t                  max_loop_us;   /* peak ui_app_task iteration this publish
+                                                  window, reset on each DOMAIN_UI write --
+                                                  see ui_diag_state_t's own comment */
+
     int64_t                   ui_diag_last_publish_us;   /* Tier 7: throttles the DOMAIN_UI
                                                               publish to ~1/s, not every loop
                                                               iteration -- "counters, not rates"

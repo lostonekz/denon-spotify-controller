@@ -12,8 +12,9 @@
 
 #include "view_model_format.h"
 
-#define W_VOLUME_SLIDER_TRACK_H  14
-#define W_VOLUME_SLIDER_HIT_H    56
+#define W_VOLUME_SLIDER_TRACK_H  THEME_TRACK_H   /* shared with the cap slider and the scrub
+                                                       bar -- see theme_metrics.h */
+#define W_VOLUME_SLIDER_HIT_H    THEME_TOUCH_MIN
 #define W_VOLUME_SLIDER_READOUT_MAX 8   /* matches VM_VOLUME_DISPLAY_MAX -- "98.5" + NUL */
 
 static const char *TAG = "w_volume_slider";
@@ -86,14 +87,17 @@ lv_obj_t *w_volume_slider_create(lv_obj_t *parent, w_volume_slider_t *w, const w
     lv_slider_set_range(w->slider, (int32_t)DENON_MV_HALF_DB_MIN, (int32_t)DENON_MV_HALF_DB_MAX);
     lv_obj_set_ext_click_area(w->slider, (W_VOLUME_SLIDER_HIT_H - W_VOLUME_SLIDER_TRACK_H) / 2);
 
-    lv_obj_set_style_radius(w->slider, 0, LV_PART_MAIN);
+    /* Round ends, matching the scrub bar -- see w_progress_bar.c's own
+     * comment for why this reverses the earlier "square off the tracks"
+     * decision, why it is not the clip_corner hazard, and what it costs. */
+    lv_obj_set_style_radius(w->slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(w->slider, THEME_COLOR_TEXT_STROKE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(w->slider, 115, LV_PART_MAIN);   /* oklch(0.08 / 0.45) -- 0.45 * 255 ~= 115 */
     lv_obj_set_style_border_width(w->slider, 2, LV_PART_MAIN);
     lv_obj_set_style_border_color(w->slider, THEME_COLOR_TEXT_STROKE, LV_PART_MAIN);
     lv_obj_set_style_border_opa(w->slider, LV_OPA_COVER, LV_PART_MAIN);
 
-    lv_obj_set_style_radius(w->slider, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(w->slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(w->slider, THEME_COLOR_ACCENT_LIVE, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(w->slider, LV_OPA_COVER, LV_PART_INDICATOR);
 

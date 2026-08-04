@@ -22,6 +22,16 @@ extern "C" {
 #define THEME_RADIUS_CARD   20
 #define THEME_RADIUS_SHEET  28
 #define THEME_TOUCH_MIN     56   /* a wall device is touched imprecisely */
+/* Drawn height of every draggable track (volume, volume cap, scrub). A
+ * shared token rather than three local copies because "they all look and
+ * feel the same" is a real, stated requirement, not a coincidence -- the
+ * scrub bar started at the design spec's 3px and was raised to match the
+ * volume bars once it became a real drag target rather than a display.
+ * Pair with THEME_TOUCH_MIN for the hit band: the visual stays slim, the
+ * touch area is (THEME_TOUCH_MIN - THEME_TRACK_H) / 2 of padding each
+ * side -- the same draw-smaller-than-tappable rule every control here
+ * follows. */
+#define THEME_TRACK_H       14
 
 #define THEME_SPACE_XS   4
 #define THEME_SPACE_S    8

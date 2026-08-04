@@ -20,9 +20,16 @@
  * user's own finger mid-drag.
  *
  * Art-forward redesign: square track (0 radius, the user's own locked
- * "square off the tracks too" answer, overriding the spec's own 2px),
- * flat white fill at a fixed opacity, not the old per-track dynamic accent
- * color (now_playing_vm_t.accent_rgb565 is removed by this same redesign).
+ * "square off the tracks too" answer, overriding the spec's own 2px), and
+ * a flat fill, not the old per-track dynamic accent colour
+ * (now_playing_vm_t.accent_rgb565 is removed by this same redesign).
+ *
+ * That fill is THEME_COLOR_ACCENT_LIVE at full opacity -- the same green
+ * w_volume_slider uses, not the spec's own "white elapsed fill at 34%".
+ * The two tracks sit directly above each other on Now Playing and are now
+ * both real drag controls, so they read as one family; the spec's white
+ * was written for a bar meant only to be looked at. The drawn height
+ * (THEME_TRACK_H) is shared with the volume tracks for the same reason.
  *
  * Elapsed/remaining timestamps: the design spec itself said "no timestamps
  * in this direction -- traded away for the art," but the user explicitly
@@ -30,6 +37,14 @@
  * here as a below-the-bar row (w_stroke_label, same mono/1px-stroke
  * treatment as every other small overlay label), the bar's own square/flat
  * styling otherwise unchanged.
+ *
+ * The timestamps are drag-aware, not a passive readout: while the bar is
+ * held they are derived from the DRAGGED position (LV_EVENT_VALUE_CHANGED),
+ * so they answer "what time am I about to land on?" -- the one question a
+ * scrubber exists to answer. They previously kept reporting live playback
+ * throughout a drag, which made the bar draggable but not really scrubbable.
+ * w_progress_bar_set_progress()'s own writes are guarded against
+ * LV_STATE_PRESSED for the same reason its bar-position write already was.
  */
 #ifndef W_PROGRESS_BAR_H
 #define W_PROGRESS_BAR_H

@@ -29,15 +29,24 @@ static const char *TAG = "screen_now_playing";
  *
  * Tightened live, per feedback asking for more of the screen's top half
  * to be unobstructed artwork: title+artist ~68px + scrub-with-timestamps
- * ~25px + transport 80px + volume 56px hit band + 4 gaps (title-artist,
+ * ~36px + transport 80px + volume 56px hit band + 4 gaps (title-artist,
  * artist-scrub, scrub-transport, transport-volume) at the new tighter
- * THEME_SPACE_S (8px, was THEME_SPACE_M/16px) = ~261px of real content.
- * 265px keeps a little real margin without needing to be exact -- same
+ * THEME_SPACE_S (8px, was THEME_SPACE_M/16px) = ~272px of real content.
+ * 276px keeps a little real margin without needing to be exact -- same
  * reasoning the previous value used, just recomputed for the new spacing.
  * Transport's 80px circle and volume's 56px hit band are real touch
  * targets, not shrunk here -- the tightening is gaps/margins only, so
- * nothing got harder to hit. */
-#define NOW_PLAYING_CONTENT_COLUMN_HEIGHT 265
+ * nothing got harder to hit.
+ *
+ * Grew by 11px (265 -> 276) when the scrub bar's drawn track went from the
+ * design spec's 3px to THEME_TRACK_H (14px), matching the volume bars --
+ * this constant is NOT derived from its children, so a widget getting
+ * taller silently overflows it. With LV_FLEX_ALIGN_END packing content
+ * toward the bottom, an overflow pushes the title off the TOP of the box
+ * rather than reporting itself, which is exactly the kind of failure that
+ * looks like a layout mystery later. Recompute this whenever a child's
+ * real height changes. */
+#define NOW_PLAYING_CONTENT_COLUMN_HEIGHT 276
 
 static lv_obj_t *make_content_column(lv_obj_t *parent)
 {

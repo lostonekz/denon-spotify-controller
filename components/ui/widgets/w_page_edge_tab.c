@@ -17,16 +17,23 @@
  * of the screen's -- real empty space on both edges at that height, per
  * the design spec's own "Group centres at x = 240" note about the
  * transport row not needing the full screen width. This widget is owned
- * by ui_router (shared chrome across all 3 screens, not per-screen), so
+ * by ui_router (shared chrome across all 4 screens, not per-screen), so
  * the offset is a fixed pixel estimate computed from Now Playing's current
  * layout constants, not something derived live from any specific screen --
  * same tradeoff every other hand-computed pixel value in this codebase
  * makes, verified/adjusted against real hardware rather than measured
- * automatically: content stack spans roughly y=207 to y=472 (265px tall,
- * 8px bottom margin); walking title (~44px) + artist (~24px) + scrub-with-
- * timestamps (~24px) + two 8px gaps lands the transport row at roughly
- * y=323-403, center ~363 -- 123px below true screen-center (240). */
-#define W_PAGE_EDGE_TAB_VERTICAL_OFFSET 123
+ * automatically: content stack spans y=196 to y=472 (276px tall, 8px
+ * bottom margin); walking up from the bottom, volume (56px) + 8px gap puts
+ * the transport row (80px) at y=328-408, center 368 -- 128px below true
+ * screen-center (240).
+ *
+ * Recomputed from 123 when the scrub bar's drawn track went from 3px to
+ * THEME_TRACK_H (14px), which grew the content column by 11px and pushed
+ * the transport row 5px down. Because this constant is hand-derived from
+ * another file's layout, it does NOT follow along on its own -- if Now
+ * Playing's stack changes height again, this needs recomputing or the tab
+ * silently drifts off the row it is supposed to align with. */
+#define W_PAGE_EDGE_TAB_VERTICAL_OFFSET 128
 
 static void fire(w_page_edge_tab_t *w)
 {

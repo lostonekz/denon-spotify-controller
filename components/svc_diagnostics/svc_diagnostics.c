@@ -166,9 +166,10 @@ void svc_diagnostics_report_tick(svc_diagnostics_t *d)
      * not-yet-created task in the loop below. */
     ui_diag_state_t ui_diag = { 0 };
     core_state_read(d->state, DOMAIN_UI, &ui_diag, sizeof(ui_diag));
-    ESP_LOGI(TAG, "ui: frames_rendered=%u frames_dropped=%u glyph_fallback=%u",
+    ESP_LOGI(TAG, "ui: frames_rendered=%u frames_dropped=%u glyph_fallback=%u max_loop_us=%u",
              (unsigned)ui_diag.frames_rendered, (unsigned)ui_diag.frames_dropped,
-             (unsigned)ui_diag.unrepresentable_glyph_count);
+             (unsigned)ui_diag.unrepresentable_glyph_count,
+             (unsigned)ui_diag.max_loop_us);
 
     resolve_task_handles_once();
     for (size_t i = 0; i < DIAG_TASK_COUNT; i++) {

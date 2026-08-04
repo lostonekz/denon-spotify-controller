@@ -131,6 +131,15 @@ static void ui_app_task(void *arg)
 
         int64_t loop_end_us = esp_timer_get_time();
         ui_app_watchdog_assert_loop_duration(loop_start_us, loop_end_us);
+
+        /* Peak loop duration for this publish window (ui_diag_state_t's own
+         * comment explains why this one is a peak and not a counter). The
+         * timestamps are already taken for the assertion above -- this adds
+         * a compare, not a measurement. */
+        uint32_t loop_us = (uint32_t)(loop_end_us - loop_start_us);
+        if (loop_us > app->max_loop_us) {
+            app->max_loop_us = loop_us;
+        }
         ui_app_watchdog_feed();   /* reached only once lv_timer_handler() has actually
                                      returned -- real observed progress, not a bare
                                      per-iteration feed (ui_app_watchdog.h) */
@@ -145,6 +154,8 @@ static void ui_app_task(void *arg)
             ui_diag_state_t diag = { 0 };
             hal_display_get_frame_counters(app->hal_disp, &diag.frames_rendered, &diag.frames_dropped);
             diag.unrepresentable_glyph_count = view_model_now_playing_apply_glyph_fallback_count(&app->np_apply);
+            diag.max_loop_us                  = app->max_loop_us;
+            app->max_loop_us                  = 0;   /* peak is per-window, not cumulative */
             core_state_write(app->state, DOMAIN_UI, LINK_STATUS_OK, &diag, sizeof(diag));
         }
 
@@ -174,6 +185,7 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     app->stopped_sem         = NULL;
     app->has_rendered_frame = false;
     app->ui_diag_last_publish_us = 0;
+    app->max_loop_us              = 0;
 
     /* Art-forward redesign: no custom heap_caps_malloc()+lv_mem_add_pool()
      * dance here anymore -- see sdkconfig.defaults.esp32s3's own comment on

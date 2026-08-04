@@ -197,6 +197,17 @@ typedef struct {
     uint32_t      frames_rendered;
     uint32_t      frames_dropped;
     uint32_t      unrepresentable_glyph_count;   /* R17 */
+    /* Longest single ui_app_task iteration observed since the previous
+     * publish -- a peak, not a counter, so it IS reset each window (unlike
+     * the three above). The loop already timed itself for R10's watchdog
+     * assertion; this just surfaces the number instead of only comparing it
+     * to a 600ms threshold, so a render change that costs 5ms more per
+     * frame is visible before it becomes a stall. Added when rounding the
+     * slider ends moved them off LVGL's single-blend fast path onto a
+     * masked per-row one (w_progress_bar.c) -- the kind of "probably fine"
+     * that this project has been wrong about before (RISKS.md R1's 337ms
+     * crossfade). */
+    uint32_t      max_loop_us;
 } ui_diag_state_t;
 
 typedef struct {
