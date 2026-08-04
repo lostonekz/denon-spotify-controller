@@ -117,6 +117,15 @@ void w_volume_slider_set_value(w_volume_slider_t *w, uint16_t volume_half_db, co
 {
     if (!lv_obj_has_state(w->slider, LV_STATE_PRESSED)) {
         lv_slider_set_value(w->slider, (int32_t)volume_half_db, LV_ANIM_OFF);
+        w_stroke_label_set_text(&w->label_readout, display_text);
     }
-    w_stroke_label_set_text(&w->label_readout, display_text);
+    /* The readout is guarded by the same PRESSED check as the track, not
+     * written unconditionally: while a finger is down, on_value_changed()
+     * above owns the number, writing it from the dragged value. Normally
+     * the difference is ~20ms of telnet echo and invisible -- but this
+     * project has a documented real failure mode where the AVR stops
+     * replying entirely while still accepting commands (svc_denon's own
+     * active-poll/reconnect fallback exists for it), and in that state an
+     * unconditional write here would pin the readout to a stale number for
+     * as long as it lasted, while the user's finger moved. */
 }
