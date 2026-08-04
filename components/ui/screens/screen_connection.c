@@ -187,8 +187,11 @@ static void connection_update(screen_ctx_t *ctx, const void *vm)
     w_info_row_set_status(&cc->header_pill, u->link_label, u->link_tone);
     w_info_row_set_value(&cc->row_host, u->host);
     w_info_row_set_value(&cc->row_round_trip, u->round_trip_display);
-    w_source_status_card_set_state(&cc->telnet_card, u->telnet_selected, "Port 23 - live");
-    w_source_status_card_set_state(&cc->http_card, u->http_selected, "Fallback - standby");
+    /* live = false on both: "which transport are we talking over" is not a
+     * liveness claim about a source, so these keep the plain white
+     * highlight rather than the Receiver screen's green one. */
+    w_source_status_card_set_state(&cc->telnet_card, u->telnet_selected, false, "Port 23 - live");
+    w_source_status_card_set_state(&cc->http_card, u->http_selected, false, "Fallback - standby");
     w_volume_cap_slider_set_value(&cc->volume_cap, u->volume_limit_half_db_raw, u->volume_limit_display);
 }
 

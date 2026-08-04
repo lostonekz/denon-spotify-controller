@@ -41,6 +41,12 @@ typedef struct {
     lv_obj_t *label_caption;   /* static "Don't go past", on its own line above the bar */
     lv_obj_t *label_readout;   /* live numeral, e.g. "35.0" */
     intent_submit_provider_t intent_submit;
+    /* Last value the fill/numeral colour was resolved for, so the two style
+     * writes it drives are skipped when the cap hasn't moved -- the setter
+     * runs every UI-task tick, and again on every drag sample. `applied_
+     * zone` starts false so the first call always writes. */
+    bool        applied_zone;
+    uint16_t    applied_zone_half_db;
 } w_volume_cap_slider_t;
 
 lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,

@@ -175,8 +175,11 @@ static void denon_update(screen_ctx_t *ctx, const void *vm)
     const denon_vm_t       *u  = (const denon_vm_t *)vm;
 
     w_power_row_set_state(&dc->power_row, u->power_on, u->denon_tone, u->power_label);
-    w_source_status_card_set_state(&dc->spotify_card, u->net_selected, u->net_subtitle);
-    w_source_status_card_set_state(&dc->tv_card, u->tv_selected, "HDMI ARC");
+    /* live = the receiver is actually powered on. Whichever source is
+     * currently selected goes green then; with the receiver off, the
+     * selected source stays plain white rather than claiming to be live. */
+    w_source_status_card_set_state(&dc->spotify_card, u->net_selected, u->power_on, u->net_subtitle);
+    w_source_status_card_set_state(&dc->tv_card, u->tv_selected, u->power_on, "HDMI ARC");
     w_volume_slider_set_value(&dc->volume, u->volume_half_db_raw, u->volume_display);
 }
 

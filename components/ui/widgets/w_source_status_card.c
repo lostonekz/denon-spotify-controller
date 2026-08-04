@@ -138,7 +138,7 @@ lv_obj_t *w_source_status_card_create(lv_obj_t *parent, w_source_status_card_t *
     lv_obj_set_style_text_font(w->subtitle_label, &ui_font_meta, 0);
     lv_obj_set_style_text_color(w->subtitle_label, THEME_COLOR_TEXT_TERTIARY, 0);
 
-    w_source_status_card_set_state(w, false, "");
+    w_source_status_card_set_state(w, false, false, "");
 
     return w->root;
 }
@@ -158,19 +158,25 @@ lv_obj_t *w_source_status_card_create(lv_obj_t *parent, w_source_status_card_t *
  * redraw pixels identical to the ones already on screen, competing with
  * the RGB panel's own DMA for the PSRAM bus (RISKS.md R1).
  *
- * `selected` gates the style block rather than each property
- * individually: every colour and width below is derived purely from it,
- * so one comparison is sufficient and there is no way for the group to
- * drift out of sync. The subtitle is diffed separately since it changes
+ * (selected, live) gates the style block rather than each property
+ * individually: every colour and width below is derived purely from that
+ * pair, so one comparison is sufficient and there is no way for the group
+ * to drift out of sync. The subtitle is diffed separately since it changes
  * independently (and more often). */
-void w_source_status_card_set_state(w_source_status_card_t *w, bool selected, const char *subtitle)
+void w_source_status_card_set_state(w_source_status_card_t *w, bool selected, bool live,
+                                        const char *subtitle)
 {
-    if (!w->applied || w->applied_selected != selected) {
+    if (!w->applied || w->applied_selected != selected || w->applied_live != live) {
         w->applied          = true;
         w->applied_selected = selected;
+        w->applied_live     = live;
 
-        lv_color_t bg_color   = selected ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_SURFACE_HIGH;
-        lv_color_t fg_color   = selected ? THEME_COLOR_SURFACE      : THEME_COLOR_TEXT_PRIMARY;
+        /* Three real states, not two: unselected (dark, outlined), selected
+         * (white fill), and selected-and-live (green fill). `live` only
+         * means anything for a selected card -- see this widget's header. */
+        lv_color_t bg_color = !selected ? THEME_COLOR_SURFACE_HIGH
+                                          : (live ? THEME_COLOR_ACCENT_LIVE : THEME_COLOR_TEXT_PRIMARY);
+        lv_color_t fg_color = selected ? THEME_COLOR_SURFACE : THEME_COLOR_TEXT_PRIMARY;
 
         lv_obj_set_style_bg_color(w->root, bg_color, 0);
         lv_obj_set_style_bg_opa(w->root, LV_OPA_COVER, 0);

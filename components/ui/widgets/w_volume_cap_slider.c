@@ -15,6 +15,47 @@
 #define W_VOLUME_CAP_SLIDER_HIT_H    56
 #define W_VOLUME_CAP_SLIDER_READOUT_MAX 8   /* matches VM_..._VOLUME_DISPLAY_MAX -- "98.5" + NUL */
 
+/* Zone boundaries, in the half-dB units this slider's own range is in
+ * (DENON_MV_HALF_DB_MIN..MAX, 0..197 == 0.0..98.5 dB). Expressed here as
+ * the dB figures a user actually reads off the readout, doubled -- 35.0 dB
+ * is this project's own default volume limit (SETTING_VOLUME_LIMIT_MAX),
+ * so "green" is exactly "at or below the cap we already consider safe".
+ * The whole fill takes one zone's colour rather than showing the
+ * boundaries as segments -- a deliberate choice: it needs no extra objects
+ * and no per-tick geometry, which matters on this render path (RISKS.md
+ * R1). */
+#define W_VOLUME_CAP_GREEN_MAX_HALF_DB   (35u * 2u)   /* <= 35.0 dB */
+#define W_VOLUME_CAP_ORANGE_MAX_HALF_DB  (68u * 2u)   /* <= 68.0 dB */
+
+static lv_color_t zone_color(uint16_t half_db)
+{
+    if (half_db <= W_VOLUME_CAP_GREEN_MAX_HALF_DB) {
+        return THEME_COLOR_ACCENT_LIVE;
+    }
+    if (half_db <= W_VOLUME_CAP_ORANGE_MAX_HALF_DB) {
+        return THEME_COLOR_STALE;
+    }
+    return THEME_COLOR_DANGER;
+}
+
+/* Both the fill and the numeral take the zone colour, so they can never
+ * disagree about which zone the cap is in. Change-gated on the raw value
+ * because this runs from a per-tick setter AND from every drag sample --
+ * lv_obj_set_style_*() has no internal no-op check (see
+ * w_source_status_card.c's own note). */
+static void apply_zone_color(w_volume_cap_slider_t *w, uint16_t half_db)
+{
+    if (w->applied_zone && w->applied_zone_half_db == half_db) {
+        return;
+    }
+    w->applied_zone          = true;
+    w->applied_zone_half_db = half_db;
+
+    lv_color_t c = zone_color(half_db);
+    lv_obj_set_style_bg_color(w->slider, c, LV_PART_INDICATOR);
+    lv_obj_set_style_text_color(w->label_readout, c, 0);
+}
+
 static void on_value_changed(lv_event_t *e)
 {
     w_volume_cap_slider_t *w = (w_volume_cap_slider_t *)lv_event_get_user_data(e);
@@ -23,6 +64,9 @@ static void on_value_changed(lv_event_t *e)
     char text[W_VOLUME_CAP_SLIDER_READOUT_MAX];
     view_model_format_half_db(half_db, text, sizeof(text));
     lv_label_set_text(w->label_readout, text);
+    /* Recolour from the dragged value, not the (lagging) stored one, so the
+     * zone changes under the user's finger as they cross a boundary. */
+    apply_zone_color(w, half_db);
 
     if (w->intent_submit.submit == NULL) {
         return;   /* not wired -- fail silent, matching w_volume_slider's own contract */
@@ -39,6 +83,7 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
                                         const w_volume_cap_slider_cfg_t *cfg)
 {
     w->intent_submit = cfg->intent_submit;
+    w->applied_zone  = false;   /* first set_value()/drag always writes the colour */
 
     /* A column: the "Don't go past" caption on its own line, then a bar row
      * built to exactly mirror w_volume_slider's own (same VOL lead-in text/
@@ -115,11 +160,8 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
     lv_obj_set_style_border_opa(w->slider, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_set_style_radius(w->slider, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(w->slider, THEME_COLOR_STALE, LV_PART_INDICATOR);   /* amber, not
-                                                                                       green -- this
-                                                                                       constrains
-                                                                                       rather than
-                                                                                       plays */
+    /* Fill colour is not fixed here -- apply_zone_color() sets it from the
+     * cap's own value (green/amber/red by zone). */
     lv_obj_set_style_bg_opa(w->slider, LV_OPA_COVER, LV_PART_INDICATOR);
 
     lv_obj_set_style_bg_opa(w->slider, LV_OPA_TRANSP, LV_PART_KNOB);
@@ -133,7 +175,7 @@ lv_obj_t *w_volume_cap_slider_create(lv_obj_t *parent, w_volume_cap_slider_t *w,
     }
     lv_obj_remove_flag(w->label_readout, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_text_font(w->label_readout, &ui_font_meta_lg, 0);
-    lv_obj_set_style_text_color(w->label_readout, THEME_COLOR_STALE, 0);
+    /* Text colour, like the fill above, comes from apply_zone_color(). */
 
     return w->row;
 }
@@ -143,6 +185,12 @@ void w_volume_cap_slider_set_value(w_volume_cap_slider_t *w, uint16_t volume_lim
 {
     if (!lv_obj_has_state(w->slider, LV_STATE_PRESSED)) {
         lv_slider_set_value(w->slider, (int32_t)volume_limit_half_db, LV_ANIM_OFF);
+        lv_label_set_text(w->label_readout, display_text);
+        apply_zone_color(w, volume_limit_half_db);
     }
-    lv_label_set_text(w->label_readout, display_text);
+    /* Mid-drag, both the numeral and the zone colour are owned by
+     * on_value_changed() above, driven by the dragged value -- overwriting
+     * them here with the (still-lagging) stored one would make the readout
+     * and fill flicker between the finger's value and the old one on every
+     * tick until the round trip completes. */
 }

@@ -45,23 +45,35 @@ typedef struct {
     lv_obj_t *subtitle_label;
     lv_obj_t *icon_segments[W_SOURCE_STATUS_CARD_ICON_SEGMENTS_MAX];
     uint8_t     icon_segment_count;
-    /* Last applied `selected`, so the ~9 style writes it drives are only
-     * issued when it actually changes -- this widget's setter is called
-     * every UI-task tick from the Receiver screen's apply glue. See
+    /* Last applied (selected, live) pair, so the ~9 style writes they drive
+     * are only issued when one actually changes -- this widget's setter is
+     * called every UI-task tick from the Receiver screen's apply glue. See
      * w_source_status_card_set_state()'s own comment. `applied` starts
-     * false so the first call always writes, whatever `selected` is. */
+     * false so the first call always writes, whatever the pair is. */
     bool        applied;
     bool        applied_selected;
+    bool        applied_live;
 } w_source_status_card_t;
 
 lv_obj_t *w_source_status_card_create(lv_obj_t *parent, w_source_status_card_t *w,
                                           const w_source_status_card_cfg_t *cfg);
 
-/* selected drives the card's own bg/border/icon/title color (light+bold when
- * selected, matching the mockup's highlighted card; dark+outlined when not);
+/* selected drives the card's own bg/border/icon/title colour: highlighted
+ * (filled, dark text) when selected, dark+outlined when not.
+ *
+ * live picks WHICH highlight a selected card gets -- green
+ * (THEME_COLOR_ACCENT_LIVE) when the source is genuinely playing through a
+ * powered-on receiver, plain white otherwise. Ignored unless selected. The
+ * Receiver screen passes denon power state here, so the active source reads
+ * green only while the receiver is actually on; an active-but-powered-off
+ * source stays white rather than claiming to be live. The Connection
+ * screen's own transport cards pass false -- "which transport are we on" is
+ * not a liveness claim.
+ *
  * subtitle is live text (e.g. "HEOS - playing"/"paused"/"idle" for the
  * Spotify card, a static "HDMI ARC" string for the TV card). */
-void w_source_status_card_set_state(w_source_status_card_t *w, bool selected, const char *subtitle);
+void w_source_status_card_set_state(w_source_status_card_t *w, bool selected, bool live,
+                                        const char *subtitle);
 
 #ifdef __cplusplus
 }
