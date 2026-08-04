@@ -54,7 +54,7 @@ typedef struct {
 ```
 
 No `tone`/`accent` fields — both were built, then removed once real hardware and user
-feedback overtook the design that needed them (§5.2). Every other screen has its own equally
+feedback overtook the design that needed them ([UI_THEME.md](UI_THEME.md) §5.2). Every other screen has its own equally
 small pure `*_vm_t` and builder (`denon_vm_t`/`connection_vm_t`/`system_vm_t`).
 
 Screens receive a `*_vm_t` and do nothing but assign it to widgets. That makes screens
@@ -155,12 +155,20 @@ no longer exists — those are marked cut, not pending.
 |---|---|
 | `w_art_card` | Full-bleed album art + integrated scrim, placeholder state. **No animated crossfade** — a real finding, not the original design: `w_art_card_set_artwork()` drops to the neutral placeholder the *instant* the currently-playing track id changes (from `playback_state_t`, which updates immediately), independent of whether the new artwork has finished fetching/decoding yet (that can lag up to ~1.8s, RISKS.md R1); once it does, the new image pops in at full opacity directly, not an animated fade — an earlier animated opacity transition (TRANSP→COVER over 600ms) forced LVGL's software renderer through a real alpha-compositing layer for every frame, measured at 337ms for a single frame on real hardware, well over R10's 100ms stall budget. Filed as a real follow-up: either root-cause LVGL's layer-alloc cost directly, or fade via a cheaper mechanism that doesn't force a layer. **Square corners, not rounded** — a separate real finding: with rounded corners (`clip_corner`) enabled, LVGL's own compositing-layer allocator (`lv_draw_layer_alloc_buf`) never returns on this real hardware/LVGL-version combination, confirmed stuck inside `lv_tlsf.c`'s own block search, not failing or asserting, at every pool size tried. Root cause not found; `clip_corner` is off as the working fix. The scrim itself is a flat, solid, per-track-adaptive opacity, not the vertical gradient this section originally described (§6) — RGB565's 16-bit color depth made a smooth opacity ramp visibly band on real hardware. |
 | `w_marquee_label` | Text that gently scrolls only when it overflows, pauses at each end |
-| `w_progress_bar` | Interpolated progress + elapsed/remaining, **with real drag-to-seek** — the "display-only, nothing to wire a drag to" note this row used to carry is obsolete: real-hardware feedback asked for a working scrubber, so `PLAYBACK_INTENT_SEEK` was built end to end (`playback_intent_types.h`, `spotify_intent.c`, `spotify_api.c`'s `PUT .../seek`). Commits once on release, not per touch-move sample — a real Spotify call has none of the local coalescing Denon's cmdq gives volume drags for free |
+| `w_progress_bar` | Interpolated progress + elapsed/remaining, **with real drag-to-seek** — the "display-only, nothing to wire a drag to" note this row used to carry is obsolete: real-hardware feedback asked for a working scrubber, so `PLAYBACK_INTENT_SEEK` was built end to end (`playback_intent_types.h`, `spotify_intent.c`, `spotify_api.c`'s `PUT .../seek`). Commits once on release, not per touch-move sample — a real Spotify call has none of the local coalescing Denon's cmdq gives volume drags for free. `VALUE_CHANGED` previews the drag (timestamps derived from the dragged position, no intent); `RELEASED` submits. Styled identically to `w_volume_slider` — see [UI_THEME.md](UI_THEME.md) §5.4's `THEME_TRACK_H` note |
 | `w_transport` | Prev / play-pause / next, with the pending-state treatment. Real drawn triangles (`lv_draw_triangle`), not symbol-font glyphs. **No heart/favorite** — no Spotify save/favorite endpoint exists anywhere in this project's own endpoint list, so a heart icon would be a permanently-dead tap target |
 | `w_volume_slider` | The real, live-dragging Denon volume control (§6). Submits `INTENT_DOMAIN_MULTI` per [adr/0007](adr/0007-denon-volume-is-primary.md), never a raw Denon intent — that would bypass the Spotify-retarget resolver |
 | `w_stroke_label` | Black-stroked overlay text, legible against unpredictable artwork. Art-forward has no scrim behind the title/artist block, so the stroke is the only thing carrying contrast there |
 | `w_toast` | Transient bottom message, auto-dismiss, queued — `TOPIC_TOAST`'s real consumer |
 | `w_page_edge_tab` | The real navigation control (§3) — tap-only, router-owned, shared across all four screens |
+
+**`clip_corner` is the hazard, not `radius`** — worth stating, since `w_art_card`'s entry
+reads like a blanket ban on rounded corners and isn't one. Per `lv_refr.c`, the ARGB8888
+`lv_draw_layer_create()` that never returned is reached *only* when `clip_corner` is set
+**and** the object has children; plain `radius` never goes near it, and all three tracks have
+round ends without trouble. `radius` does cost the fast path (`lv_draw_sw_fill.c` single-blends
+only at `radius == 0`, else per-draw `lv_malloc` + row-by-row masking, and at 14px tall no
+fast middle section remains) — measured, and affordable (§8, [RISKS.md](RISKS.md) R10).
 
 **Built, Phase 6 (Receiver / Connection / System):**
 
@@ -222,123 +230,9 @@ w_volume_cap_slider ──INTENT_DOMAIN_SETTINGS──► dispatch_one_intent() 
 
 ## 5. Theme
 
-### 5.1 Tokens, never literals
-
-No hex colour, pixel size, or duration appears outside `theme/`. Screens and widgets refer
-to semantic roles only.
-
-The real, current token list (`theme_colors.h`) — these are the OKLCH-derived values the
-Art-forward redesign computed via `theme_tokens_oklch_to_rgb565()`, not hand-picked hex:
-
-```c
-THEME_COLOR_BG              /* #090C0A  near-black, slightly cool          */
-THEME_COLOR_SURFACE         /* #141417  cards                              */
-THEME_COLOR_SURFACE_HIGH    /* #1F1F24  raised / pressed                   */
-THEME_COLOR_TEXT_PRIMARY    /* #F5F5F7                                     */
-THEME_COLOR_TEXT_SECONDARY  /* #A0A0A8                                     */
-THEME_COLOR_TEXT_TERTIARY   /* #6A6A72                                     */
-THEME_COLOR_TEXT_ONIMAGE    /* #E4E4E4  overlay text over full-bleed art   */
-THEME_COLOR_TEXT_STROKE     /* #000000  w_stroke_label's outline           */
-THEME_COLOR_ACCENT_LIVE     /* #4ADD8C  healthy/live green                 */
-THEME_COLOR_STALE           /* #C9A227  the honest "data is old" tint      */
-THEME_COLOR_DANGER          /* #D9534F  offline / rejected                 */
-```
-
-Semantic naming is what makes a light theme, a night theme, or a rebrand a one-file change
-three years from now.
-
-### 5.2 Dynamic accent — built, then removed from the UI
-
-`artwork_palette.c` extracts a dominant colour during JPEG decode (it already has the
-decoded buffer, so this is nearly free): downsample, histogram, discard
-near-black/near-white/low-saturation bins, take the modal hue, boost saturation, clamp
-luminance for contrast, and publish it as `artwork_state_t.dominant_color_rgb565`.
-
-**Nothing in the UI consumes it today.** The accent had exactly two consumers — the progress
-bar's fill colour and the old scrim's contrast logic — and the Art-forward redesign removed
-both (the scrub bar is flat white per the design spec, "no scrim, no gradient, no vignette…
-traded away for the art"). `now_playing_vm_t.accent_rgb565` is gone with them. The
-extraction itself stays: it's real, general-purpose `core_state` data with its own
-service-level existence, and a UI-only redesign has no business deleting it upstream. If a
-future screen wants a per-track accent, the data is already there.
-
-### 5.3 Typography
-
-The real, current font set (`theme_fonts.h`). Two families — Archivo for reading, IBM Plex
-Mono for numbers that change in place, so digits don't jitter:
-
-| Token | Size / weight | Used for |
-|---|---|---|
-| `ui_font_display` | 44 / 700 | reserved — no current caller |
-| `ui_font_hero` | 38 / 700 | Now Playing's track title |
-| `ui_font_title` | 30 / 600 | System's verdict headline |
-| `ui_font_body` | 20 / 400 | Now Playing's artist line, toasts |
-| `ui_font_label` | 16 / 500 | row labels/values, card titles |
-| `ui_font_meta` | 13 / 500 mono | captions, section headers, subtitles, timestamps |
-| `ui_font_meta_lg` | 15 / 500 mono | volume readouts |
-
-### 5.3b Glyph coverage and fallback
-
-Fonts are generated at build time by `tools/gen_assets.py` with a **restricted glyph set**.
-A full Unicode font at 40 px is megabytes, so coverage is a real decision with a memory cost.
-
-**Decision: Latin-1 Supplement + Latin Extended-A**, plus the punctuation that actually
-appears in track metadata (curly quotes, en/em dash, ellipsis, ×, ♭/♯). Roughly 250 glyphs
-across four sizes. This covers essentially all Western European catalogue — Björk,
-Sigur Rós, Beyoncé, Motörhead, Mylène Farmer, Antônio Carlos Jobim — which matches the
-intended library.
-
-**Not covered:** Cyrillic, Greek, Hebrew, Arabic, and CJK. Including CJK is the expensive
-fork: thousands of glyphs, far too large to embed at these sizes, and it would force runtime
-glyph paging from a flash partition — which reopens [adr/0005](adr/0005-assets-in-app-image.md)
-and adds a font cache to the memory budget. Deliberately deferred, not overlooked.
-
-**Fallback is mandatory, not optional.** Spotify metadata is user-generated and international
-regardless of listening habits — one Japanese bonus track or a Cyrillic remix credit will
-appear eventually. The rule:
-
-- Unrepresentable glyphs render as **U+FFFD (replacement character)**, never as `.notdef`
-  boxes or blank space, and never as garbled multi-byte fragments.
-- The **UTF-8 decoder is the safety-critical part.** Truncating a multi-byte sequence at a
-  buffer boundary must not produce a partial codepoint. `view_model` truncation is
-  codepoint-aware, and this is host-tested with deliberately adversarial strings.
-- A string that is *entirely* unrepresentable falls back to a meaningful alternative
-  (album name, or "--") rather than rendering as a row of replacement characters,
-  which looks broken in a way an honest fallback does not.
-- `svc_diagnostics` counts unrepresentable-glyph events. A rising count is the signal that
-  the glyph set no longer matches the user's actual library — which is how we would know to
-  revisit this decision with evidence rather than by guessing.
-
-### 5.4 Metrics and motion
-
-```c
-THEME_RADIUS_CARD      20 px      THEME_SPACE_XS   4      THEME_SPACE_L   24
-THEME_RADIUS_SHEET     28 px      THEME_SPACE_S    8      THEME_SPACE_XL  32
-                                  THEME_SPACE_M    16
-THEME_TOUCH_MIN        56 px      /* a wall device is touched imprecisely */
-
-THEME_MOTION_INSTANT   100 ms  ease-out    /* press feedback        */
-THEME_MOTION_QUICK     200 ms  ease-out    /* toggles, toasts       */
-THEME_MOTION_STANDARD  180 ms  ease-in-out /* unused — see below    */
-THEME_MOTION_SLOW      600 ms  ease-in-out /* unused — see below    */
-THEME_MOTION_AMBIENT  1200 ms  linear      /* backdrop drift        */
-```
-
-No `THEME_RADIUS_PILL` — widgets that want a fully round shape use LVGL's own
-`LV_RADIUS_CIRCLE` directly; a token that just aliases an LVGL constant adds a name without
-adding a decision.
-
-All animation goes through `lv_anim`. No manual per-frame timers, no `lv_refr_now()`.
-
-**Two of the five motion tokens are currently unused, for the same real reason:** this
-board's render path (`LV_DISPLAY_RENDER_MODE_PARTIAL`, a single small draw buffer) makes
-full-screen animation genuinely expensive, and both animations that would have used them
-were measured and removed rather than shipped choppy — `THEME_MOTION_SLOW` was the artwork
-crossfade (337 ms for a single frame through an alpha-compositing layer, well over R10's
-100 ms budget — §4's `w_art_card` entry), and `THEME_MOTION_STANDARD` was briefly the
-page-transition slide (§3). Both are left defined in case a cheaper mechanism makes either
-viable later. Motion is still what separates this from a dashboard — but not at the cost of
-a visibly worse frame.
+Colour, type, metrics, and motion tokens — moved to **[UI_THEME.md](UI_THEME.md)** when this
+file outgrew the 400-line limit (`tools/check_limits.py`). The rule that matters here: no hex
+colour, pixel size, or duration appears outside `theme/`.
 
 ---
 
@@ -370,7 +264,7 @@ for why the backlight itself has only one real transition to make.
   is fixed-on throughout `ACTIVE`/`DIM`/`NIGHT`, and those states get their calmer feel from
   content (animation reduction, monochrome, hidden transport). A scope decision, not a
   hardware limit — `svc_power` can build real ramping against that PWM register when
-  dim/sleep/wake actually gets designed. `THEME_MOTION_AMBIENT` (§5.4) accordingly applies
+  dim/sleep/wake actually gets designed. `THEME_MOTION_AMBIENT` ([UI_THEME.md](UI_THEME.md)) accordingly applies
   only to backdrop drift, not backlight.
 - Wake on touch is handled in `svc_input` **before** the gesture recogniser: the first
   touch after sleep wakes the panel and is *consumed*, never delivered as a tap. Otherwise
@@ -395,6 +289,10 @@ for why the backlight itself has only one real transition to make.
   consistently been found on hardware, not here** — the compositing-layer hang, the
   render-cost measurements, the corner artifact, the boot-order bugs. Treat a clean harness
   run as "it builds and doesn't crash", not as visual verification.
+- **On target**, `DOMAIN_UI` also carries `max_loop_us` — peak UI-task iteration per publish
+  window (a peak, so it resets each window, unlike its neighbours). It exists because the
+  600 ms stall assertion is a poor early-warning system; see [RISKS.md](RISKS.md) R10 for the
+  reasoning and the measured reference points.
 - **On target**, frame and dropped-frame counters run continuously (`DOMAIN_UI`) and are
   reported over UART by `svc_diagnostics` every 5 s. There is no on-device diagnostics
   screen; the System screen (§6c) shows link health and identifiers, not frame counters.

@@ -28,8 +28,8 @@ Phase 5 build work started. This is what actually shipped:
 │                                            │
 │      Track Title Goes Here                 │  hero 38/700, marquee if long
 │      Artist Name                           │  20/400
-│      ──────────●─────────────────          │  flat white, real drag-to-seek
-│      1:24                        -2:41     │  restored after live feedback
+│      ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░            │  same height/fill/track as VOL below
+│      1:24                        -2:41     │  follow the finger while scrubbing
 │         ◀◀        ⏸        ▶▶              │  56 px targets, no heart
 │      VOL ▓▓▓▓▓▓▓▓░░░░░░░░░░         52.5   │  real live-dragging Denon volume
 └────────────────────────────────────────────┘
@@ -51,6 +51,15 @@ Phase 5 build work started. This is what actually shipped:
   cover visibly lingered under the new track's title/artist for that whole window.
 - The progress bar animates continuously from local interpolation, corrected smoothly on
   each poll — never a visible jump — and is a real seek control (UI_ARCHITECTURE.md §4).
+  **While you scrub, the timestamps follow your finger** rather than continuing to report
+  live playback: the one question a scrubber has to answer is "what time am I about to land
+  on?", and until that was fixed it was the one thing the bar couldn't tell you. The seek
+  itself still commits once, on release.
+- **The scrub bar and the volume bar are deliberately identical** — same height
+  (`THEME_TRACK_H`), fill colour, track translucency, outline, and rounded ends. The design
+  spec had drawn the scrub bar 3px, flat white, opaque-tracked, because it was never meant to
+  be touched; once it became a real drag control that made it read as a different class of
+  thing from the control sitting directly beneath it.
 - The volume row is `denon_state_t`'s own volume (Denon is the primary volume control,
   ADR-0007), live and draggable. Its screen position is deliberately pixel-identical to the
   Connection screen's own cap slider, so the control doesn't visibly jump when paging.

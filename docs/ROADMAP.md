@@ -338,7 +338,9 @@ require restructuring.
 - Root-cause the real LVGL compositing-layer hang found in Phase 5 Tier 7 (`w_art_card`'s
   rounded corners currently disabled because of it — [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md)
   §4), or move corner-rounding into the artwork pixel buffer itself instead of relying on
-  LVGL's own `clip_corner`
+  LVGL's own `clip_corner`. Narrowed since: the hang is specific to `clip_corner` on an
+  object *with children*, not to rounded corners generally — plain `radius` takes an
+  entirely different path and is in use on all three slider tracks without trouble
 
 ---
 

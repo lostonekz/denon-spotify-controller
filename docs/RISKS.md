@@ -322,9 +322,11 @@ lever on R1, which is the risk worth controlling.
 **Risk.** One blocking call in an LVGL event handler and the panel is frozen. On a wall
 device with no console, that is indistinguishable from dead hardware.
 
-**Mitigation.** Hard no-blocking rule; task watchdog on every task (a stall becomes a
-reboot with a coredump, which is strictly better than a frozen panel); a debug assertion on
-loop duration; the review checklist explicitly covers it.
+**Mitigation.** Hard no-blocking rule; task watchdog on every task (a stall becomes a reboot
+with a coredump, strictly better than a frozen panel); a debug assertion on loop duration;
+the review checklist covers it. That assertion warns late — its threshold had to rise to
+600 ms for artwork scaling (~285 ms, R1) — so `ui_diag_state_t.max_loop_us` also reports peak
+loop duration per window. Measured: **~24 ms idle, 48–68 ms dragging**, frame rate unaffected.
 
 ---
 
