@@ -134,6 +134,35 @@ compiler; they're harmless but unnecessary elsewhere.
 
 ---
 
+## 1b2. External accounts you need before Spotify will work
+
+Neither is in this repo, and both can rot while a project is parked.
+
+**A Spotify developer app** — <https://developer.spotify.com/dashboard>. Create one, and:
+
+- Register a **loopback** redirect URI of the form `http://127.0.0.1:<port>/callback`, and
+  set the identical string in `CONFIG_DSC_SPOTIFY_REDIRECT_URI` (which ships empty — there is
+  no default to inherit). Spotify matches it byte for byte and rejects any mismatch. Loopback
+  is the only `http://` form Spotify permits, which is the whole reason this design works:
+  nothing listens on that address, on any device
+  ([adr/0009](adr/0009-manual-code-paste-over-bounce-page.md) for why that is sufficient,
+  [adr/0011](adr/0011-on-device-pair-page-over-console-paste.md) for what replaced the
+  console paste).
+- Put the app's client ID in `CONFIG_DSC_SPOTIFY_CLIENT_ID` via `menuconfig`. There is no
+  client *secret* — this is PKCE.
+- Spotify deactivates dashboard apps that go unused for long periods. **If pairing suddenly
+  fails after the project has been parked, check the dashboard before debugging firmware.**
+
+**A Spotify Premium account.** The Web API's playback-control endpoints
+(`/v1/me/player/*`) return `403` for free accounts. Nothing in this codebase can work around
+that.
+
+The stored refresh token also has a finite life (~6 months; `spotify_reauth_watch.c` tracks
+it and raises `reauth_recommended`). A device that has sat unpowered for a year **will** need
+re-pairing — which is what the pair overlay exists for.
+
+---
+
 ## 1c. The SDL UI harness
 
 The real `ui_router`, screens and widgets — the exact source files ESP-IDF compiles into

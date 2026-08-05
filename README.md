@@ -2,8 +2,10 @@
 
 Wall-mounted Spotify + Denon AVR-X3800H controller.
 
-**Hardware:** Waveshare **ESP32-S3-Touch-LCD-4** (N16R8) — 480×480 ST7701 on the parallel RGB
-bus, GT911 capacitive touch, CH32V003 IO expander.
+**Hardware:** Waveshare **ESP32-S3-Touch-LCD-4, Rev4.0** (ESP32-S3-WROOM-1 N16R8) — 480×480
+ST7701 on the parallel RGB bus, GT911 capacitive touch, CH32V003 IO expander.
+**The revision matters.** Pin assignments and the IO-expander chip differ between revisions;
+this code targets Rev4.0 and `bsp_pins.h` is the single place that encodes it.
 Vendor wiki: <https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4>
 (schematics, the panel's own ST7701 init sequence, and the IO-expander protocol all live
 there — [docs/MODULES.md](docs/MODULES.md) records which parts of it turned out to be wrong
