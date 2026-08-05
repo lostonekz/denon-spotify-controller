@@ -115,6 +115,11 @@ Two allocations worth naming because they were deliberately moved *out* of "afte
   history includes LVGL allocation failures under UI-task memory pressure, so a deterministic
   `ui_app_create()` failure at boot beats a possible hang mid-session. It lands in PSRAM
   (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`, so a 7.7 KiB request prefers it).
+- **TJpgDec's ~3.1 KiB decode scratchpad.** Left unset, `esp_jpeg` allocates it
+  `MALLOC_CAP_DEFAULT`, which under `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` *prefers
+  internal SRAM* — ~3.1 KiB of the ~24 KiB free internal heap, on every track change.
+  `artwork_decode.c` now supplies a PSRAM buffer via `cfg.advanced.working_buffer`, sized by
+  mirroring `jpeg_decoder.c`'s `JD_FASTDECODE` `#if` — undersizing it would corrupt memory.
 - **The `httpd` task's stack and sockets** cannot be moved that way — `esp_http_server` uses a
   plain `xTaskCreate`, so they come from *internal* RAM, of which ~24 KiB is free at steady
   state, and `svc_artwork`'s 16.7 KiB contiguous TLS record buffer wants the same pool.

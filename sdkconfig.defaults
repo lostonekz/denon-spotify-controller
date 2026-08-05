@@ -115,6 +115,34 @@ CONFIG_LV_USE_FONT_COMPRESSED=y
 # generated sdkconfig rather than assumed.
 CONFIG_LV_USE_QRCODE=y
 
+# Build espressif/esp_jpeg's own vendored TJpgDec instead of linking the one
+# baked into ROM. Both are TJpgDec; the difference is vintage. ROM's is
+# "(C)ChaN, 2012" (esp_rom/esp32s3/include/esp32s3/rom/tjpgd.h) with a frozen
+# config, and esp_jpeg's CMakeLists only compiles the vendored tjpgd/tjpgd.c
+# when this is off -- so with the default we were shipping a 2012 decoder
+# while carrying a 2021 one (R0.03) in-tree unused.
+#
+# The reason that matters here: esp_jpeg 1.2.1's "fixed decoding of
+# non-conforming 0xFFFF marker" lives ONLY in the vendored copy. A
+# mis-parsed marker yields a garbage segment length, the parser skips a bogus
+# distance and then reads past the end of a perfectly valid buffer -- which
+# surfaces as JDR_INP (ESP_FAIL), deterministically, on the same image every
+# time. That is exactly the symptom recorded against one real album cover in
+# artwork_service_fetch.c.
+#
+# NOT done for speed: Espressif's own benchmark table has ROM at 52ms vs the
+# external build at 59ms for the same image. Costs ~5 KB flash. Output format
+# and optimization level are deliberately left at their defaults (RGB888-capable,
+# 32-bit barrel shifter) so this change moves exactly one variable -- the
+# decoder's vintage -- and cannot alter on-screen colour or byte order.
+CONFIG_JD_USE_ROM=n
+
+# Only reachable once JD_USE_ROM is off. Supplies a default Huffman table for
+# JPEGs that omit their own -- another class of non-conforming image a CDN can
+# serve and TJpgDec would otherwise reject. Cheap insurance in the same spirit
+# as the marker fix above.
+CONFIG_JD_DEFAULT_HUFFMAN=y
+
 # Real bug, found live: CONFIG_HEAP_POISONING_COMPREHENSIVE was switched on
 # here as a TEMPORARY diagnostic during the device-picker freeze
 # investigation (Phase 5 post-Tier-7 device switcher addition) to chase what

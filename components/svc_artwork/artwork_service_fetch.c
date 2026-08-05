@@ -96,7 +96,28 @@ void artwork_service_handle_track_change(svc_artwork_t *a)
      * last_track_id, so an in-progress retry isn't mistaken for "done"
      * above) give a real, bounded chance to recover from transient network
      * flakiness on this long-lived streamed read, without retrying a
-     * permanently-bad cover forever. */
+     * permanently-bad cover forever.
+     *
+     * On what JDR_INP actually means, because this comment previously
+     * implied the decoder couldn't handle that cover's FORMAT and sent a
+     * later reader chasing the wrong thing: it does not. TJpgDec reports an
+     * unsupported JPEG standard (progressive, arithmetic-coded, CMYK, exotic
+     * chroma subsampling) as JDR_FMT3, and a bad quantization table as
+     * JDR_FMT1. Every single `return JDR_INP` in tjpgd.c is guarded by the
+     * input callback returning FEWER BYTES THAN ASKED FOR -- it means the
+     * decoder ran off the end of the buffer. Two candidates, both real and
+     * both deterministic per-image, which is why it reproduced every time:
+     *   1. The fetch was truncated. net_http_request() breaks out of its read
+     *      loop with `buffer full -- truncate, not an error` and returns
+     *      TRUE, so a short body reaches the decoder looking like a success.
+     *      The resp.len line logged below is what tells these apart.
+     *   2. The decoder desynced on a non-conforming marker and walked past
+     *      the end of a COMPLETE buffer. Fixed upstream in esp_jpeg 1.2.1,
+     *      but that fix lives only in the vendored TJpgDec -- which this
+     *      project did not build until CONFIG_JD_USE_ROM=n (sdkconfig.defaults).
+     * Switching to espressif/esp_new_jpeg was evaluated and rejected for
+     * this: it is baseline-only too, so it cannot decode anything TJpgDec
+     * rejects on format grounds, and it would cost internal RAM. */
     if (strcmp(fetching_track_id, a->attempt_track_id) != 0) {
         strncpy(a->attempt_track_id, fetching_track_id, sizeof(a->attempt_track_id) - 1);
         a->attempt_track_id[sizeof(a->attempt_track_id) - 1] = '\0';
