@@ -23,8 +23,19 @@ typedef enum {
     UI_HARNESS_FIXTURE_PALE_COVER,
     UI_HARNESS_FIXTURE_LONG_TITLE_MARQUEE,
     UI_HARNESS_FIXTURE_NO_ACTIVE_PLAYBACK,
+    /* The three below present the Spotify pair overlay at startup. They are
+     * the only fixtures that seed DOMAIN_NET/DOMAIN_SPOTIFY -- and the only
+     * practical way to point a real phone camera at this project's QR code
+     * before flashing a build that contains it. */
+    UI_HARNESS_FIXTURE_PAIR,
+    UI_HARNESS_FIXTURE_PAIR_NO_NET,
+    UI_HARNESS_FIXTURE_PAIR_CONNECTED,
     UI_HARNESS_FIXTURE_COUNT,
 } ui_harness_fixture_t;
+
+/* True for the three PAIR_* fixtures above -- main.c presents the overlay
+ * when this is set, rather than hardcoding the id list at the call site. */
+bool ui_harness_fixture_presents_pair_overlay(ui_harness_fixture_t fixture);
 
 /* Case-sensitive, exact match against ui_harness_fixture_name()'s own
  * strings. False (out untouched) if name matches none of them. */

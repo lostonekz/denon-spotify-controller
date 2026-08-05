@@ -523,6 +523,15 @@ target_include_directories(test_view_model_system PRIVATE
     "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
+dsc_add_host_test(test_view_model_pair
+    test_view_model_pair.c
+    "${REPO_ROOT}/components/ui/view_model/view_model_pair.c"
+    "${REPO_ROOT}/components/ui/view_model/view_model_tone.c")
+target_include_directories(test_view_model_pair PRIVATE
+    "${REPO_ROOT}/components/ui/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
 dsc_add_host_test(test_theme_tokens
     test_theme_tokens.c
     "${REPO_ROOT}/components/ui/theme/theme_tokens.c")

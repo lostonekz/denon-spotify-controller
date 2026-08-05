@@ -56,6 +56,11 @@ static lv_obj_t *system_create(screen_ctx_t *ctx)
         DIAG_FAIL("row_spotify");
         return NULL;
     }
+    /* The one interactive row on this screen. Without it, "Reauth needed"
+     * states a problem the panel gives you no way to act on. */
+    if (sc->on_spotify_activate != NULL) {
+        w_info_row_set_on_activate(&sc->row_spotify, sc->on_spotify_activate, sc->on_spotify_activate_ctx);
+    }
 
     w_info_row_cfg_t firmware_cfg = { .label = "Firmware", .show_status_dot = false };
     if (w_info_row_create(root, &sc->row_firmware, &firmware_cfg) == NULL) {

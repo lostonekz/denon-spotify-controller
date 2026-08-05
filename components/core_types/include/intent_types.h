@@ -24,6 +24,9 @@ typedef enum {
     INTENT_DOMAIN_SETTINGS,
     INTENT_DOMAIN_POWER,
     INTENT_DOMAIN_OTA,
+    INTENT_DOMAIN_PAIRING,   /* start/stop the Spotify pairing HTTP listener --
+                                 * owned by main/pair_http.c, not a svc_* at all
+                                 * (pairing_intent_types.h explains why) */
 
     /* Has no single owning service, so the dispatcher has nowhere to route
      * it except a coordinator table -- a missing table entry is a startup

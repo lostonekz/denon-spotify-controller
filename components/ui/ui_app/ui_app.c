@@ -1,5 +1,7 @@
 #include "ui_app.h"
 
+#include "ui_app_screens.h"
+
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_log.h"
@@ -122,10 +124,7 @@ static void ui_app_task(void *arg)
          * view_model_now_playing_apply_tick() drains its own core_eventbus
          * subscriptions directly (never blocking, matching the same "zero
          * timeout" contract this step's name promises). */
-        view_model_now_playing_apply_tick(&app->np_apply);
-        view_model_denon_apply_tick(&app->denon_apply);
-        view_model_connection_apply_tick(&app->connection_apply);
-        view_model_system_apply_tick(&app->system_apply);
+        ui_app_screens_tick(app);
 
         uint32_t next_ms = lv_timer_handler();
 
@@ -235,65 +234,8 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
         goto fail;
     }
 
-    /* Now Playing's own screen_now_playing_ctx_t.intent_submit must be the
-     * WRAPPED provider (view_model_now_playing_apply's own), not cfg's raw
-     * one directly -- that wrapper is the one place that observes every
-     * submit() call to start pending/ACK tracking (view_model_now_playing_
-     * apply.h's own top comment). Safe to construct before np_apply_init()
-     * runs below: it only reads app->np_apply's fields at call time, on a
-     * real tap, well after this function returns. */
-    app->np_screen.artwork_pixels = cfg->artwork_pixels;
-    app->np_screen.intent_submit  = view_model_now_playing_apply_intent_submit_provider(&app->np_apply);
-    /* w_volume_slider uses THIS raw provider, not the wrapped one above
-     * (w_power_glyph did too, before it and its header control were
-     * removed -- screen_now_playing.h's own top comment) -- a real bug
-     * found during the Art-forward redesign's own planning: the wrapped
-     * provider's wrapped_submit() sets a single screen-wide pending flag
-     * on every successful submit regardless of domain, which w_transport_
-     * set_state() reads to dim/disable the transport row. Denon volume is
-     * a different domain entirely and gives near-instant telnet-echoed
-     * feedback, unlike
-     * Spotify's poll-confirmed round trip that pending/toast machinery
-     * exists for -- routing it through that provider would visibly (and
-     * incorrectly) dim the transport row on every volume drag. */
-    app->np_screen.intent_submit_raw = cfg->intent_submit;
-
-    /* Every control on the Receiver/Connection screens submits Denon- or
-     * settings-domain intents with a near-instant round trip (w_power_row/
-     * w_power_glyph, w_volume_slider, w_volume_cap_slider) -- the same
-     * reasoning above for np_screen's own raw provider applies here too, so
-     * neither screen gets a wrapped variant at all (screen_denon.h's own
-     * comment). System is fully read-only, no intent_submit field at all. */
-    app->denon_screen.intent_submit_raw      = cfg->intent_submit;
-    app->connection_screen.intent_submit_raw = cfg->intent_submit;
-
-    if (!ui_router_register_screen(&app->router, UI_SCREEN_NOW_PLAYING, screen_now_playing_get_interface(), &app->np_screen) ||
-        !ui_router_register_screen(&app->router, UI_SCREEN_DENON,       screen_denon_get_interface(), &app->denon_screen) ||
-        !ui_router_register_screen(&app->router, UI_SCREEN_CONNECTION,  screen_connection_get_interface(), &app->connection_screen) ||
-        !ui_router_register_screen(&app->router, UI_SCREEN_SYSTEM,      screen_system_get_interface(), &app->system_screen)) {
-        ESP_LOGE(TAG, "ui_router_register_screen failed");
-        goto fail;
-    }
-
-    if (!view_model_now_playing_apply_init(&app->np_apply, cfg->state, cfg->bus, &app->router,
-                                              &app->np_screen, cfg->intent_submit, cfg->clock)) {
-        ESP_LOGE(TAG, "view_model_now_playing_apply_init failed");
-        goto fail;
-    }
-
-    if (!view_model_denon_apply_init(&app->denon_apply, cfg->state, cfg->bus, &app->router)) {
-        ESP_LOGE(TAG, "view_model_denon_apply_init failed");
-        goto fail;
-    }
-
-    if (!view_model_connection_apply_init(&app->connection_apply, cfg->state, cfg->bus, &app->router)) {
-        ESP_LOGE(TAG, "view_model_connection_apply_init failed");
-        goto fail;
-    }
-
-    if (!view_model_system_apply_init(&app->system_apply, cfg->state, cfg->bus, &app->router, cfg->clock)) {
-        ESP_LOGE(TAG, "view_model_system_apply_init failed");
-        goto fail;
+    if (!ui_app_screens_create(app, cfg)) {
+        goto fail;   /* already logged which step failed */
     }
 
     app->stopped_sem = xSemaphoreCreateBinary();

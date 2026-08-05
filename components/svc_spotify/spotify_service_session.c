@@ -123,6 +123,15 @@ static void action_enter_authorized_first_time(void *ctx)
     xSemaphoreTake(s->session_lock, portMAX_DELAY);
     safe_strncpy(s->state.refresh_token, s->state.token_op_tokens.refresh_token, sizeof(s->state.refresh_token));
     s->state.paired_at_epoch_s = time(NULL);
+    /* The CSRF nonce is single-use. It used to survive here indefinitely (no
+     * expiry anywhere, and action_unpair() doesn't touch it either), so a
+     * replay of the same code+state stayed acceptable to
+     * svc_spotify_submit_pasted_url() forever. That was tolerable when the
+     * only way to submit one was a USB console requiring physical access; it
+     * is not now that a LAN-reachable POST can (main/pair_http.c, adr/0011).
+     * Clearing it here also makes docs/SECURITY.md's existing claim that the
+     * nonce is cleared on success actually true. */
+    s->state.pending_state[0] = '\0';
     xSemaphoreGive(s->session_lock);
 
     safe_strncpy(s->state.access_token, s->state.token_op_tokens.access_token, sizeof(s->state.access_token));
@@ -142,7 +151,12 @@ static void action_enter_authorized_first_time(void *ctx)
 static void action_report_exchange_failed(void *ctx)
 {
     svc_spotify_t *s = (svc_spotify_t *)ctx;
-    ESP_LOGW(TAG, "code exchange failed -- run `spotify pair` again for a fresh code");
+    ESP_LOGW(TAG, "code exchange failed -- start pairing again for a fresh code");
+    /* Same single-use reasoning as action_enter_authorized_first_time(): a
+     * failed exchange must not leave a nonce that keeps accepting pastes. */
+    xSemaphoreTake(s->session_lock, portMAX_DELAY);
+    s->state.pending_state[0] = '\0';
+    xSemaphoreGive(s->session_lock);
     set_session_status(s, SPOTIFY_SESSION_UNPAIRED);
 }
 

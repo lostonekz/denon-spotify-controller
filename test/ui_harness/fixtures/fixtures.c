@@ -14,7 +14,17 @@ static const char *const FIXTURE_NAMES[UI_HARNESS_FIXTURE_COUNT] = {
     [UI_HARNESS_FIXTURE_PALE_COVER]          = "pale-cover",
     [UI_HARNESS_FIXTURE_LONG_TITLE_MARQUEE]  = "long-title-marquee",
     [UI_HARNESS_FIXTURE_NO_ACTIVE_PLAYBACK]  = "no-active-playback",
+    [UI_HARNESS_FIXTURE_PAIR]                = "pair",
+    [UI_HARNESS_FIXTURE_PAIR_NO_NET]         = "pair-nonet",
+    [UI_HARNESS_FIXTURE_PAIR_CONNECTED]      = "pair-connected",
 };
+
+bool ui_harness_fixture_presents_pair_overlay(ui_harness_fixture_t fixture)
+{
+    return fixture == UI_HARNESS_FIXTURE_PAIR ||
+           fixture == UI_HARNESS_FIXTURE_PAIR_NO_NET ||
+           fixture == UI_HARNESS_FIXTURE_PAIR_CONNECTED;
+}
 
 /* Deliberately malformed: a real multi-byte prefix followed by a bare 0xE2
  * (the lead byte of a 3-byte UTF-8 sequence) with no continuation bytes
@@ -115,6 +125,32 @@ static void set_denon_normal(core_state_t *state)
     core_state_write(state, DOMAIN_DENON, LINK_STATUS_OK, &d, sizeof(d));
 }
 
+/* 192.168.1.23 in ip_info.ip.addr's own layout: network byte order held in a
+ * little-endian word, so the FIRST octet is the LOW byte. Written the long
+ * way here on purpose -- a hardcoded 0x1701A8C0 would silently stop matching
+ * the comment if anyone edited it. */
+static void set_net(core_state_t *state, link_status_t status, bool have_ip)
+{
+    net_state_t net = { 0 };
+    net.link_up = true;   /* deliberately true even in the no-network fixture: this
+                              field is a write-once latch on target and never goes
+                              false, which is exactly the trap the pair VM must not
+                              fall into. The fixture reproduces that shape. */
+    if (have_ip) {
+        net.ipv4 = 192u | (168u << 8) | (1u << 16) | (23u << 24);
+    }
+    net.rssi_dbm = -48;
+    core_state_write(state, DOMAIN_NET, status, &net, sizeof(net));
+}
+
+static void set_spotify(core_state_t *state, spotify_session_summary_t session)
+{
+    spotify_state_t sp = { 0 };
+    sp.session_status = session;
+    sp.authenticated   = session == SPOTIFY_SESSION_ACTIVE;
+    core_state_write(state, DOMAIN_SPOTIFY, LINK_STATUS_OK, &sp, sizeof(sp));
+}
+
 void ui_harness_fixture_apply(core_state_t *state, ui_harness_fixture_t fixture, const uint16_t **out_pixels)
 {
     ensure_pixels_generated();
@@ -176,6 +212,32 @@ void ui_harness_fixture_apply(core_state_t *state, ui_harness_fixture_t fixture,
         set_playback(state, LINK_STATUS_OK, "", "", "", "", false, 0, 0);
         set_artwork(state, LINK_STATUS_OK, 0, "", 0);
         *out_pixels = NULL;
+        break;
+
+    /* The pairing fixtures share Now Playing's normal state -- what varies is
+     * only DOMAIN_NET/DOMAIN_SPOTIFY, which is all the pair overlay reads. */
+    case UI_HARNESS_FIXTURE_PAIR:
+        set_playback(state, LINK_STATUS_OK, "Reflections", "Kiasmos", "Blurred EP",
+                     "5x7yQz3k", true, 87000, 214000);
+        set_artwork(state, LINK_STATUS_OK, 1, "5x7yQz3k", 0x3A6A);
+        set_net(state, LINK_STATUS_OK, true);
+        set_spotify(state, SPOTIFY_SESSION_PAIRING);   /* the QR-visible state */
+        break;
+
+    case UI_HARNESS_FIXTURE_PAIR_NO_NET:
+        set_playback(state, LINK_STATUS_OK, "Reflections", "Kiasmos", "Blurred EP",
+                     "5x7yQz3k", true, 87000, 214000);
+        set_artwork(state, LINK_STATUS_OK, 1, "5x7yQz3k", 0x3A6A);
+        set_net(state, LINK_STATUS_UNAVAILABLE, true);   /* stale IP still present */
+        set_spotify(state, SPOTIFY_SESSION_PAIRING);
+        break;
+
+    case UI_HARNESS_FIXTURE_PAIR_CONNECTED:
+        set_playback(state, LINK_STATUS_OK, "Reflections", "Kiasmos", "Blurred EP",
+                     "5x7yQz3k", true, 87000, 214000);
+        set_artwork(state, LINK_STATUS_OK, 1, "5x7yQz3k", 0x3A6A);
+        set_net(state, LINK_STATUS_OK, true);
+        set_spotify(state, SPOTIFY_SESSION_ACTIVE);   /* -> the confirm-to-re-pair state */
         break;
 
     case UI_HARNESS_FIXTURE_COUNT:

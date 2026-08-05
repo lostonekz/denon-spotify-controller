@@ -134,6 +134,8 @@ bool ui_router_create(ui_router_t *router, lv_display_t *disp)
     for (int i = 0; i < UI_SCREEN_COUNT; i++) {
         router->registered[i] = false;
     }
+    router->overlay_registered = false;
+    router->overlay_presented  = false;
     return true;
 }
 
@@ -233,6 +235,22 @@ void ui_router_update(ui_router_t *router, ui_screen_id_t id, const void *vm)
     if (id >= UI_SCREEN_COUNT || !router->registered[id] || router->screens[id].update == NULL) {
         return;
     }
+    /* While an overlay is up, nobody is looking at any screen. This is a
+     * stronger version of the id != active gate below, and it matters more:
+     * the screen directly underneath the overlay is NOT scrolled off, so
+     * unlike the other three its widgets are still in a "visible" area as far
+     * as lv_obj_invalidate() is concerned (invalidate_area_core() gates on
+     * lv_obj_area_is_visible()). A label write down there would therefore
+     * produce a real invalidation and force a redraw of the overlay region
+     * sitting on top of it.
+     *
+     * Deliberately NOT implemented by hiding the active screen's root:
+     * LV_OBJ_FLAG_HIDDEN children are skipped by flex content-size
+     * computation, which would reflow the pager and break the target *
+     * page_w scroll maths ui_router_go_to_screen() depends on. */
+    if (router->overlay_presented) {
+        return;
+    }
     /* Only the screen the user is actually looking at gets updated. An
      * off-screen screen's widgets would still do real work if updated --
      * LVGL clips the resulting *drawing* to the visible area, but the
@@ -275,4 +293,107 @@ bool ui_router_go_to_screen(ui_router_t *router, ui_screen_id_t target)
     lv_obj_scroll_to_x(router->pager, (int32_t)target * page_w, LV_ANIM_OFF);
     dispatch_screen_change(router, target);
     return true;
+}
+
+bool ui_router_register_overlay(ui_router_t *router, screen_if_t screen_if, void *user_ctx)
+{
+    if (router->overlay_registered || screen_if.create == NULL) {
+        return false;
+    }
+
+    router->overlay              = screen_if;
+    router->overlay_ctx.root     = NULL;
+    router->overlay_ctx.parent   = router->pager;
+    router->overlay_ctx.user_ctx = user_ctx;
+
+    lv_obj_t *root = screen_if.create(&router->overlay_ctx);
+    if (root == NULL) {
+        return false;
+    }
+
+    /* FLOATING is what makes this work as an overlay rather than a fifth
+     * page. lv_obj_move_to_to()'s positioning path adds the parent's own
+     * coordinate WITHOUT subtracting lv_obj_get_scroll_x() for floating
+     * children, so this sits over the visible viewport no matter which of the
+     * four pages the pager is scrolled to -- the same mechanism the two
+     * page-edge tabs already rely on. Flex also skips floating children
+     * entirely, so it cannot perturb the id-based slot maths that
+     * ui_router_register_screen() has a whole essay about.
+     *
+     * The opacity/radius settings below are load-bearing, not cosmetic: they
+     * are what lets lv_refr_get_top_obj() pick this object and skip drawing
+     * the four screens underneath. See this file's header in ui_router.h. */
+    lv_obj_set_size(root, lv_display_get_horizontal_resolution(router->disp),
+                    lv_display_get_vertical_resolution(router->disp));
+    lv_obj_add_flag(root, LV_OBJ_FLAG_FLOATING);
+    lv_obj_align(root, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(root, -1);
+
+    router->overlay_ctx.root   = root;
+    router->overlay_registered = true;
+    return true;
+}
+
+bool ui_router_present_overlay(ui_router_t *router)
+{
+    if (!router->overlay_registered || router->overlay_presented) {
+        return false;
+    }
+
+    /* Last child index means both the top of the draw order and the front of
+     * lv_indev_search_obj()'s reverse child walk, so nothing underneath can
+     * receive a tap. Re-asserted here rather than trusted from registration
+     * time, since it costs nothing and register_screen() has a documented
+     * history of shuffling this array. */
+    lv_obj_move_to_index(router->overlay_ctx.root, -1);
+    lv_obj_remove_flag(router->overlay_ctx.root, LV_OBJ_FLAG_HIDDEN);
+
+    /* Not strictly required -- an opaque overlay already covers and swallows
+     * taps on them -- but the tabs are chrome for a navigation that is not
+     * available right now, and this keeps that true if the overlay ever stops
+     * being fully opaque. */
+    w_page_edge_tab_set_visible(&router->left_tab, false);
+    w_page_edge_tab_set_visible(&router->right_tab, false);
+
+    router->overlay_presented = true;
+    if (router->overlay.mount != NULL) {
+        router->overlay.mount(&router->overlay_ctx);
+    }
+    return true;
+}
+
+bool ui_router_dismiss_overlay(ui_router_t *router)
+{
+    if (!router->overlay_presented) {
+        return false;
+    }
+
+    /* unmount() first, while the overlay is still nominally up -- it is where
+     * a screen releases whatever mount() acquired, and for the pair overlay
+     * that means stopping the pairing HTTP listener. */
+    if (router->overlay.unmount != NULL) {
+        router->overlay.unmount(&router->overlay_ctx);
+    }
+    router->overlay_presented = false;
+
+    lv_obj_add_flag(router->overlay_ctx.root, LV_OBJ_FLAG_HIDDEN);
+    /* NOT set_visible(true) on both -- that would forget that the leftmost
+     * and rightmost screens each hide one tab. This is the one function that
+     * already knows the rule. */
+    update_page_edge_tabs(router);
+    return true;
+}
+
+bool ui_router_overlay_is_presented(const ui_router_t *router)
+{
+    return router->overlay_presented;
+}
+
+void ui_router_update_overlay(ui_router_t *router, const void *vm)
+{
+    if (!router->overlay_presented || router->overlay.update == NULL) {
+        return;
+    }
+    router->overlay.update(&router->overlay_ctx, vm);
 }

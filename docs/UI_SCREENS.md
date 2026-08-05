@@ -145,4 +145,47 @@ The "is it me or the house?" screen. Health first, identifiers last.
 - The panel identifier is the low 3 bytes of the station MAC. No real serial number exists
   anywhere on this board — this is a stable, unique-per-device stand-in, not a fabricated
   string.
+- **The Spotify row is a tap target**, the only one on this screen. It opens the pair overlay
+  below. Until that existed, "Reauth needed" was a problem stated in words on a touchscreen
+  with nothing to touch. Tapping raises that one row to `THEME_TOUCH_MIN` and gives it a
+  chevron — a visible density change on that row alone, deliberately not applied to the rest.
+
+---
+
+## 6d. Pair Spotify (overlay)
+
+Not a fifth page — an overlay over whatever screen you were on, reached only from the System
+screen's Spotify row. [adr/0011](adr/0011-on-device-pair-page-over-console-paste.md).
+
+```
+┌────────────────────────────────────────────┐
+│          Scan to connect Spotify           │  headline tracks session state
+│        ┌──────────────────────────┐        │
+│        │ ▄▄▄▄▄  ▄  ▄▄   ▄▄▄▄▄     │        │  white card -- the card's padding
+│        │ █ ▄▄█ ▄▄█▄ ▄▄▄ █▄▄▄ █    │        │  IS the quiet zone, not lv_qrcode's
+│        │ █▄▄▄█ ▄ ▄▄▄ ▄█ █ ▄▄▄█    │        │  own option (which gives ~4 px)
+│        │ ▀▀▀▀▀ ▀ ▀ ▀▀▀▀ ▀▀▀▀▀▀    │        │
+│        └──────────────────────────┘        │
+│         http://192.168.1.23:8080/pair      │  typed fallback, always shown with the QR
+│  Your phone must be on the same Wi-Fi as   │  said before you scan, not after it fails
+│              this panel.                   │
+│                 [ Close ]                  │
+└────────────────────────────────────────────┘
+```
+
+- **The QR encodes the panel's own page, not the Spotify authorize URL.** ~33 characters
+  instead of ~320, so the code is version 3 and scannable at arm's length. It also means the
+  512-byte authorize URL never has to reach `ui` at all — there is no field for it in
+  `spotify_state_t` and `event_t` caps at 64 bytes, so there was no path for it anyway.
+- **The QR only appears once something is actually listening.** It is gated on
+  `session_status == PAIRING`, which `pair_http_start()` only reaches after `httpd_start()`
+  has succeeded — so the panel cannot advertise a port that failed to bind.
+- **Opening this screen starts the listener; closing it stops it.** That is the whole reason
+  `mount`/`unmount` stopped being no-ops (UI_ARCHITECTURE.md §3).
+- **"No Wi-Fi connection" is decided by `net.meta.status`, never `link_up`** — that field is a
+  write-once latch that nothing ever sets false, so trusting it would put a QR on screen
+  pointing at an address this panel no longer holds.
+- **Opening it on a healthy session shows a confirm button, not a QR.** `spotify_session_fsm`
+  has no `AUTHORIZED → PAIRING` edge, so re-pairing has to unpair first — and the button says
+  so, because an abandoned re-pair really does leave you signed out.
 

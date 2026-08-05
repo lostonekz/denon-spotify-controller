@@ -7,6 +7,7 @@
 #include "theme_metrics.h"
 
 #define W_INFO_ROW_DOT_SIZE 8
+#define W_INFO_ROW_CHEVRON  10   /* bounding box for the tap-affordance chevron */
 
 static lv_color_t color_for_tone(tone_t tone)
 {
@@ -22,6 +23,9 @@ lv_obj_t *w_info_row_create(lv_obj_t *parent, w_info_row_t *w, const w_info_row_
 {
     w->applied = false;   /* nothing applied yet -- the first set_value/set_status
                               call must write whatever colour it carries */
+    w->on_activate       = NULL;
+    w->on_activate_ctx = NULL;
+    w->chevron            = NULL;
 
     w->root = lv_obj_create(parent);
     if (w->root == NULL) {
@@ -140,4 +144,55 @@ void w_info_row_set_value(w_info_row_t *w, const char *value)
 void w_info_row_set_status(w_info_row_t *w, const char *value, tone_t tone)
 {
     info_row_apply(w, color_for_tone(tone), value);
+}
+
+static void on_row_clicked(lv_event_t *e)
+{
+    w_info_row_t *w = (w_info_row_t *)lv_event_get_user_data(e);
+    if (w->on_activate != NULL) {
+        w->on_activate(w->on_activate_ctx);
+    }
+}
+
+void w_info_row_set_on_activate(w_info_row_t *w, void (*cb)(void *ctx), void *ctx)
+{
+    w->on_activate       = cb;
+    w->on_activate_ctx = ctx;
+
+    /* Root only. Every child was explicitly stripped of CLICKABLE in create()
+     * (LVGL gives every plain lv_obj that flag by default), so the tap lands
+     * here rather than on whichever label happened to be under the finger. */
+    lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(w->root, on_row_clicked, LV_EVENT_CLICKED, w);
+
+    lv_obj_set_style_min_height(w->root, THEME_TOUCH_MIN, 0);
+    lv_obj_set_style_bg_color(w->root, THEME_COLOR_SURFACE_HIGH, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(w->root, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(w->root, THEME_RADIUS_CARD, LV_STATE_PRESSED);
+    /* Negative side padding would clip; instead give the pressed background a
+     * little breathing room around the text by padding the row itself. */
+    lv_obj_set_style_pad_hor(w->root, THEME_SPACE_S, 0);
+
+    /* Drawn, not typed. tools/gen_assets.py generates these fonts over
+     * 0x20-0x7E / 0xA0-0xFF / Latin Extended-A only, so U+203A and friends
+     * simply are not in them -- a chevron glyph would render as a missing box
+     * and tick R17's unrepresentable-glyph counter. w_page_edge_tab draws its
+     * own chevrons with lv_line for exactly this reason. */
+    if (w->chevron == NULL) {
+        static const lv_point_precise_t chevron[3] = {
+            { 0, 0 }, { W_INFO_ROW_CHEVRON / 2, W_INFO_ROW_CHEVRON / 2 }, { 0, W_INFO_ROW_CHEVRON },
+        };
+        w->chevron = lv_line_create(w->root);
+        if (w->chevron == NULL) {
+            return;   /* still a working tap target, just without the hint */
+        }
+        lv_line_set_points(w->chevron, chevron, 3);
+        lv_obj_remove_flag(w->chevron, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(w->chevron, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_line_width(w->chevron, 2, 0);
+        lv_obj_set_style_line_rounded(w->chevron, true, 0);
+        lv_obj_set_style_line_color(w->chevron, THEME_COLOR_TEXT_TERTIARY, 0);
+        lv_obj_set_style_pad_left(w->chevron, THEME_SPACE_S, 0);
+        lv_obj_set_size(w->chevron, W_INFO_ROW_CHEVRON / 2 + 2, W_INFO_ROW_CHEVRON + 2);
+    }
 }

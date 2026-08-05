@@ -75,4 +75,14 @@
  * debugging on a desktop. */
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
 
+/* Target: CONFIG_LV_USE_QRCODE=y (sdkconfig.defaults). LVGL's default is 0.
+ *
+ * The pair overlay's QR code. This one has to be listed here explicitly for
+ * the reason this whole file exists: the harness does NOT read sdkconfig at
+ * all, so a Kconfig flip on the target side is invisible here -- and w_qr.c
+ * would simply fail to compile (lv_qrcode.h #if's its entire API away),
+ * taking the one place a QR can be checked against a real phone camera
+ * before flashing with it. */
+#define LV_USE_QRCODE 1
+
 #endif /* LV_CONF_H */

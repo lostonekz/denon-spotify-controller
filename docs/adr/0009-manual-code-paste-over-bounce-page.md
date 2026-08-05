@@ -1,6 +1,6 @@
 # 0009 — Manual code paste over a bounce-page for Spotify OAuth
 
-Status: Accepted
+Status: Accepted — superseded by [0011](0011-on-device-pair-page-over-console-paste.md)
 Date: 2026-07-31
 
 ## Context

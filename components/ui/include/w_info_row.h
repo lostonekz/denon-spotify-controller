@@ -38,6 +38,10 @@ typedef struct {
      * writes, whatever colour it carries. See info_row_apply(). */
     bool        applied;
     lv_color_t applied_color;
+
+    void      (*on_activate)(void *ctx);   /* NULL unless set_on_activate was called */
+    void       *on_activate_ctx;
+    lv_obj_t *chevron;                       /* NULL unless this row is a tap target */
 } w_info_row_t;
 
 lv_obj_t *w_info_row_create(lv_obj_t *parent, w_info_row_t *w, const w_info_row_cfg_t *cfg);
@@ -53,6 +57,18 @@ void w_info_row_set_value(w_info_row_t *w, const char *value);
  * it," not "did the user turn it off", so red is the more honest color
  * here than w_power_glyph's own off-is-gray convention). */
 void w_info_row_set_status(w_info_row_t *w, const char *value, tone_t tone);
+
+/* Opt-in: makes the whole row a tap target. Only the System screen's Spotify
+ * row uses this -- every other row stays exactly as dense as it is today,
+ * which is why this is a separate call rather than a cfg flag defaulting on.
+ *
+ * Adds a trailing chevron, a pressed-state background, and raises the row to
+ * THEME_TOUCH_MIN tall (a visible layout change on that one row -- a wall
+ * panel is touched imprecisely, and a 16px-tall text row is not a target).
+ * CLICKABLE goes on the root only; the children stay non-clickable so the
+ * tap lands on the row rather than on whichever label it happened to hit.
+ * Same structure w_page_edge_tab uses, and the same reason. */
+void w_info_row_set_on_activate(w_info_row_t *w, void (*cb)(void *ctx), void *ctx);
 
 #ifdef __cplusplus
 }

@@ -160,8 +160,37 @@ service_desc_t svc_artwork_service_desc(svc_artwork_restart_ctx_t *restart_ctx);
  * suspend/resume from outside the artwork task -- see this file's top
  * comment). Wired to the OTA-coexistence relay (app_wiring, Tier 4). A
  * request overwrites a not-yet-drained prior request of a different kind;
- * today's only caller already avoids issuing a redundant same-kind request
- * (app_wiring_ticks.c's artwork_suspended_for_ota guard). */
+ * callers should avoid issuing a redundant same-kind request
+ * (app_wiring_ticks.c's artwork_suspended_for_ota guard; main/pair_http.c's
+ * own s_server != NULL early return).
+ *
+ * WHILE SUSPENDED, EVERYTHING THIS SERVICE OWNS IS GONE -- not paused. Both
+ * the cache backing memory and jpeg_staging are freed, current_handle and
+ * last_track_id are cleared. Any code path that touches either must check
+ * `a->jpeg_staging == NULL` first; that is the canonical "am I suspended"
+ * test, and handle_track_change() opens with it.
+ *
+ * That guard exists because of a real StoreProhibited crash on real hardware
+ * (EXCVADDR 0 -- a memcpy into a NULL destination inside
+ * esp_http_client_read, reached via net_http_request from
+ * handle_track_change). jpeg_staging IS the destination buffer that function
+ * hands net_http_request(), and nothing checked it. The task loop's drain
+ * ordering was believed to cover this and did not: draining first only makes
+ * the suspend happen first, within the same iteration, after which the fetch
+ * ran anyway.
+ *
+ * It stayed latent for as long as the OTA relay was the only caller -- an
+ * OTA reboots within seconds and nobody changes tracks during one. The
+ * Spotify pair overlay (adr/0011) suspends artwork for as long as someone
+ * leaves that screen open, during live playback, so the next playback event
+ * fetched into freed memory. suspend_now() clearing last_track_id removes
+ * the early-return that might otherwise have masked it.
+ *
+ * NOTE for future callers reaching for this to free INTERNAL RAM: it does
+ * not. Both buffers are MALLOC_CAP_SPIRAM. What it frees on the internal
+ * heap is the transient 16.7 KB contiguous TLS record buffer a fetch would
+ * otherwise allocate -- which is the real reason both current callers use
+ * it, since both start something that wants internal RAM of its own. */
 void svc_artwork_request_suspend(svc_artwork_t *a);
 void svc_artwork_request_resume(svc_artwork_t *a);
 

@@ -106,7 +106,20 @@ reviewers to trust an invariant the design already broke in at least four places
 It is false because ESP-IDF's WiFi driver, LWIP, DNS resolution, `esp_http_client`, and
 mbedTLS all allocate and free continuously at runtime, on every connection and every
 request. We do not control that and cannot switch it off. The design also knowingly
-allocates for LVGL modals, the OTA task, and JSON parsing.
+allocates for the OTA task, JSON parsing, and the pairing HTTP server's task and sockets.
+
+Two allocations worth naming because they were deliberately moved *out* of "after startup":
+
+- **The pair overlay's QR canvas** (~7.7 KiB, `LV_COLOR_FORMAT_I1` at 240 px) is allocated
+  once at `ui_router_register_overlay()` time, not when the overlay opens. This board's
+  history includes LVGL allocation failures under UI-task memory pressure, so a deterministic
+  `ui_app_create()` failure at boot beats a possible hang mid-session. It lands in PSRAM
+  (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`, so a 7.7 KiB request prefers it).
+- **The `httpd` task's stack and sockets** cannot be moved that way — `esp_http_server` uses a
+  plain `xTaskCreate`, so they come from *internal* RAM, of which ~24 KiB is free at steady
+  state, and `svc_artwork`'s 16.7 KiB contiguous TLS record buffer wants the same pool.
+  `pair_http_start()` therefore suspends `svc_artwork` for the duration, the same treatment
+  the OTA relay already applies for the same reason.
 
 The honest rule, which is enforceable:
 

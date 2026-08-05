@@ -10,6 +10,8 @@
 #include "freertos/idf_additions.h"   /* xTaskCreatePinnedToCoreWithCaps() */
 
 #include "app_wiring_volume.h"
+#include "pair_http.h"
+#include "pairing_intent_types.h"
 #include "settings_intent_types.h"
 
 void settings_tick_trampoline(void *ctx)    { svc_settings_tick((svc_settings_t *)ctx); }
@@ -152,6 +154,19 @@ static void dispatch_one_intent(app_ctx_t *a, const intent_t *intent)
         }
         break;
     }
+    case INTENT_DOMAIN_PAIRING: {
+        /* Submitted by the pair overlay's own mount()/unmount() -- the
+         * listener's lifetime is exactly that screen's (adr/0011). Kept to a
+         * call into pair_http.c so this file stays a dispatcher. */
+        pairing_intent_payload_t payload;
+        memcpy(&payload, intent->payload, sizeof(payload));
+        if ((pairing_intent_kind_t)intent->kind == PAIRING_INTENT_START) {
+            pair_http_start(a, payload.force != 0);
+        } else {
+            pair_http_stop(a);
+        }
+        break;
+    }
     case INTENT_DOMAIN_MULTI: {
         intent_t resolved = app_wiring_resolve_multi_intent(a, intent);
         if (resolved.domain != INTENT_DOMAIN_COUNT) {
@@ -199,11 +214,19 @@ bool app_wiring_start_intent_dispatch_task(app_ctx_t *ctx)
      * between a tap and the service that acts on it. Core 0 with the rest
      * of the non-UI work, keeping core 1 for the UI.
      *
-     * 3 KB: this task only ever does a queue receive, a switch, a
-     * core_state_read() (the MULTI resolve path) and another queue send --
-     * no TLS, no NVS, no printf-family formatting, none of the deep
-     * ESP-IDF call chains that made svc_scheduler's own 3 KB too small
-     * once OTA-apply actions landed on it (see svc_scheduler.c's comment).
+     * 4 KB, raised from 3 KB when INTENT_DOMAIN_PAIRING landed. The old
+     * 3 KB was justified by "no TLS, no NVS, no printf-family formatting,
+     * none of the deep ESP-IDF call chains" -- which stopped being true the
+     * moment this switch could reach pair_http_start(): that does an
+     * httpd_start() (socket setup plus an xTaskCreate) and an
+     * svc_spotify_begin_pair() (a 512-byte URL buffer, an mbedTLS SHA-256
+     * context, a 604-byte ctrl command and a 256-byte percent-encode
+     * scratch), peaking around 1.4 KB on this stack. It would very likely
+     * have fitted in 3 KB; the point is that the justification would have
+     * been stale, and this project's rule is that stack sizes are measured,
+     * not guessed. The stack is PSRAM-backed, so the extra kilobyte costs
+     * nothing scarce. Compare svc_scheduler.c's own 3-KB-too-small comment
+     * once OTA-apply actions landed on it.
      * svc_diagnostics reports this task's own high-water mark under the
      * name below, so the assumption is checkable rather than asserted. */
     /* PSRAM-backed stack, via xTaskCreatePinnedToCoreWithCaps() -- the same
@@ -217,7 +240,7 @@ bool app_wiring_start_intent_dispatch_task(app_ctx_t *ctx)
      * where a single artwork fetch needs a 16.7 KiB contiguous internal
      * allocation for its TLS record buffer. The TCB still lands in internal
      * RAM automatically (idf_additions.h's guarantee); only the stack moves. */
-    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(intent_dispatch_task, "intent", 3072, ctx,
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(intent_dispatch_task, "intent", 4096, ctx,
                                                        5, &ctx->intent_task_handle, 0,
                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     return ok == pdPASS;

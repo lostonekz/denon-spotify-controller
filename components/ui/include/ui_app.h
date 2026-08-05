@@ -33,11 +33,13 @@
 #include "screen_connection.h"
 #include "screen_denon.h"
 #include "screen_now_playing.h"
+#include "screen_pair.h"
 #include "screen_system.h"
 #include "ui_router.h"
 #include "view_model_connection_apply.h"
 #include "view_model_denon_apply.h"
 #include "view_model_now_playing_apply.h"
+#include "view_model_pair_apply.h"
 #include "view_model_system_apply.h"
 
 #ifdef __cplusplus
@@ -56,6 +58,11 @@ typedef struct {
     core_state_t                          *state;    /* already initialized (Phase 1) */
     core_eventbus_t                          *bus;      /* already initialized (Phase 1) */
     time_source_t                               clock;
+    uint16_t                                     pair_http_port;   /* CONFIG_DSC_PAIR_HTTP_PORT,
+                                                                        passed in by app_wiring_ui.c
+                                                                        so sdkconfig.h stays out of
+                                                                        components/ui -- the pair
+                                                                        overlay's QR encodes it */
 } ui_app_cfg_t;
 
 typedef struct {
@@ -94,8 +101,14 @@ typedef struct {
                                                               reasoning as denon_screen's own */
     view_model_connection_apply_t     connection_apply;
 
-    screen_system_ctx_t         system_screen;   /* fully read-only, no intent_submit at all */
+    screen_system_ctx_t         system_screen;   /* read-only rows, but its Spotify row is a
+                                                       tap target that presents the pair overlay */
     view_model_system_apply_t     system_apply;
+
+    screen_pair_ctx_t           pair_screen;   /* the overlay, not a fifth page -- registered
+                                                    LAST (ui_router_register_overlay's own
+                                                    requirement) and presented on demand */
+    view_model_pair_apply_t       pair_apply;
 
     TaskHandle_t         task_handle;
     volatile bool           task_should_stop;

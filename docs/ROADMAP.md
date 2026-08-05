@@ -249,8 +249,16 @@ Denon round-trip latency (an honest "time since our last send" approximation —
 has no request IDs), Wi-Fi RSSI (the `net_state_t` field existed but nothing ever wrote it),
 and a distinct `SPOTIFY_SESSION_REFRESHING` state, previously collapsed into "Connected".
 
-**Still open in this phase:** modals and pickers (no modal infrastructure is built at all),
-provisioning and re-pair screens, the motion pass, `svc_power`, and `svc_input`. Verified:
+**Spotify re-pair, and the first overlay** ([adr/0011](adr/0011-on-device-pair-page-over-console-paste.md)):
+the panel shows a QR for a pairing page it serves itself, so a phone can complete the OAuth
+paste without a serial console — and the System screen's "Reauth needed" finally leads
+somewhere. Brought a minimal single-slot overlay into `ui_router` with its first real caller,
+made `mount`/`unmount` do real work for the first time (they bound the HTTP listener's
+lifetime to the screen's), and fixed a latent `state`-nonce replay window on the way.
+
+**Still open in this phase:** pickers, provisioning screens, the motion pass, `svc_power`, and
+`svc_input`. Modal infrastructure now exists (one overlay slot) but has only the one caller.
+Verified:
 62/62 host tests, 11/11 gates, confirmed live on real hardware — including two regressions
 that only appeared after flashing (a screen confidently reporting "the receiver is off"
 during the seconds before `svc_denon` first connects, and an eventbus subscriber array that

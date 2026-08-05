@@ -129,6 +129,19 @@ These need a real answer before a production run, and none of them block Phase 0
 - Whether Secure Boot v2 is worth its recovery cost at the intended volume.
 - Whether OTA hosting moves from static files to a server that can do staged rollout.
 - Privacy: what a diagnostics export may contain if it ever leaves the user's network.
+- **A PIN on the pairing page.** [adr/0011](adr/0011-on-device-pair-page-over-console-paste.md)
+  records an accepted exposure: while the pair overlay is open, any LAN host can read the
+  authorize URL including the live `state` nonce, and could pair this panel to its own Spotify
+  account by winning a race against the user. The owner of this device declined a PIN in
+  favour of a shorter flow, understanding the trade. **That decision does not survive shipping
+  to anyone else** — a 4-digit code rendered on the panel and required as a second form field
+  closes it outright, and is the first thing to add before a unit leaves this house.
+- **A `PAIR_CANCELLED` event for `spotify_session_fsm`.** Consenting on the phone and then
+  closing the pair overlay before pasting leaves the session in `AWAITING_CODE` until a reboot
+  or a fresh pairing. The old console flow had the same hole, but the overlay makes it far
+  easier to hit. Fixing it properly needs the new event plus a `RESUMING` re-entry so an
+  abandoned re-pair can return to a working session — real new FSM surface, host-testable
+  against the existing suite, and more than the pairing feature itself warranted.
 
 Under ARCHITECTURE §0.1 each of these stays open because the partition table reserves the
 space, the manifest carries the fields, and the verification path already runs.

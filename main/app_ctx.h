@@ -53,9 +53,13 @@
  * contract, which failed ui_app_create(), which failed app_wiring_create()
  * -- a crash-reboot loop, no UI ever rendered): view_model_connection_
  * apply_t's own TOPIC_DENON (1) + view_model_system_apply_t's TOPIC_NET/
- * TOPIC_DENON/TOPIC_SPOTIFY (3). Not a hard architectural limit, raise it
- * when a real subscriber needs more room. */
-#define APP_EVENTBUS_MAX_SUBS       18
+ * TOPIC_DENON/TOPIC_SPOTIFY (3). The Spotify pair overlay adds 2 more
+ * (view_model_pair_apply_t's TOPIC_NET/TOPIC_SPOTIFY) -- 20 total. Raised
+ * with the subscriber rather than after the fact this time, since the
+ * failure mode is the boot-fatal crash loop described above and not
+ * anything that shows up at compile time. Not a hard architectural limit,
+ * raise it when a real subscriber needs more room. */
+#define APP_EVENTBUS_MAX_SUBS       20
 /* TOPIC_SETTINGS/TOPIC_DIAG (Phase 1) + TOPIC_NET/TOPIC_TIME/TOPIC_OTA
  * (Phase 2) + TOPIC_DENON (Phase 3) + TOPIC_PLAYBACK/TOPIC_SPOTIFY/
  * TOPIC_ARTWORK/TOPIC_INTENT_ACK (Phase 4) + TOPIC_TOAST (Phase 5 Tier 6 --

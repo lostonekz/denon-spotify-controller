@@ -33,10 +33,27 @@
  * Playing's relative order and the boot default are unchanged from when
  * this was written; only the two rightmost slots were replaced.
  *
- * Modal presentation (volume sheet, pickers, etc.) is NOT built here at
- * all -- deferred to Phase 6 with its first real caller, per the same
- * plan section: an API with zero real callers is exactly the kind of
- * thing to get wrong.
+ * Modal presentation: a single, minimal OVERLAY slot now exists, built with
+ * its first real caller (the Spotify pair screen) rather than speculatively,
+ * per the same plan section -- an API with zero real callers is exactly the
+ * kind of thing to get wrong. It is deliberately one slot, not a stack:
+ * nothing in this project needs a modal over a modal, and a depth-N stack
+ * would be four more states to get wrong for no caller.
+ *
+ * The overlay is a child of the pager, NOT lv_display_get_layer_top(). This
+ * is a real render-cost decision, not a stylistic one: lv_refr_get_top_obj()
+ * searches for a fully-opaque covering object only WITHIN the active screen
+ * (lv_refr.c calls it with lv_display_get_screen_active(disp)), and uses it
+ * to skip drawing everything underneath. An opaque, full-size pager child
+ * wins that search, so the four screens below are never traversed. Something
+ * parked in layer_top cannot: lv_refr draws the top/sys layers IN ADDITION
+ * to a full active-screen pass. On this board's LV_DISPLAY_RENDER_MODE_
+ * PARTIAL + single 40-row draw buffer that is the difference between one
+ * screen's worth of drawing and two.
+ *
+ * That culling depends on the overlay root staying genuinely opaque:
+ * bg_opa COVER, radius 0, no transform, no scrim. Adding a translucent
+ * scrim later would silently give the cost back.
  */
 #ifndef UI_ROUTER_H
 #define UI_ROUTER_H
@@ -107,6 +124,13 @@ typedef struct {
     bool                 registered[UI_SCREEN_COUNT];
 
     ui_screen_id_t     active;
+
+    screen_if_t       overlay;                     /* the single modal slot -- see the
+                                                       file header for why it lives in the
+                                                       pager and not layer_top */
+    screen_ctx_t       overlay_ctx;
+    bool                 overlay_registered;
+    bool                 overlay_presented;
 } ui_router_t;
 
 /* Creates the pager container (4 x panel-width, horizontal, non-
@@ -146,6 +170,39 @@ void ui_router_update(ui_router_t *router, ui_screen_id_t id, const void *vm);
  * tap-only, deliberately (see w_page_edge_tab.h's own top comment);
  * nothing in this router listens for LV_EVENT_GESTURE. */
 bool ui_router_go_to_screen(ui_router_t *router, ui_screen_id_t target);
+
+/* Registers the single overlay slot. Like every screen here it is CREATED
+ * IMMEDIATELY and never destroyed -- present/dismiss only toggle visibility.
+ * That matters more than usual for this particular overlay: its QR canvas is
+ * a ~7.7 KB draw buffer, and this board's history includes LVGL allocation
+ * failures under UI-task memory pressure. Paying it at boot turns a possible
+ * mid-session hang into a deterministic ui_app_create() failure.
+ *
+ * MUST be called AFTER all UI_SCREEN_COUNT screens are registered:
+ * ui_router_register_screen() re-parks both page-edge tabs at child index -1
+ * on every call, so an overlay registered earlier would be shuffled below
+ * them and lose both its z-order and its input priority.
+ *
+ * Does NOT call mount() -- that fires on present(), which is the whole point
+ * of a modal's lifecycle (and, for the pair screen, is what starts and stops
+ * the pairing HTTP listener). */
+bool ui_router_register_overlay(ui_router_t *router, screen_if_t screen_if, void *user_ctx);
+
+/* Shows the overlay, hides both page-edge tabs, and dispatches its mount().
+ * False if no overlay is registered or one is already up. */
+bool ui_router_present_overlay(ui_router_t *router);
+
+/* Dispatches unmount() FIRST, then hides the overlay and restores the tabs to
+ * whatever the active screen says they should be. False if nothing is up. */
+bool ui_router_dismiss_overlay(ui_router_t *router);
+
+bool ui_router_overlay_is_presented(const ui_router_t *router);
+
+/* Forwards to the overlay's update(), only while it is actually presented.
+ * Deliberately a separate entry point rather than an extra id understood by
+ * ui_router_update(): one function meaning two different things depending on
+ * hidden state is how the screen-vs-tab index bugs in this file happened. */
+void ui_router_update_overlay(ui_router_t *router, const void *vm);
 
 #ifdef __cplusplus
 }

@@ -175,4 +175,29 @@ config DSC_SPOTIFY_AUTOPAIR_STATE
         (32 hex chars, matching spotify_auth.c's own random_hex(..., 16))
         example value, not a placeholder.
 
+config DSC_PAIR_HTTP_PORT
+    int "Port for the on-device Spotify pairing page"
+    default 8080
+    help
+        The panel's QR code encodes http://<this device>:<port>/pair, and
+        main/pair_http.c serves that page -- but ONLY while the pair overlay
+        is open on the panel. See docs/adr/0011.
+
+        Deliberately not 80: net_wifi's Wi-Fi provisioning captive portal
+        already uses that, and while the two are normally mutually exclusive
+        (portal = SoftAP, this = STA), a Wi-Fi drop mid-pairing can start
+        provisioning while this server is still up. Also deliberately not the
+        loopback port in the Spotify redirect_uri, which is a different thing
+        entirely and has nothing listening on it by design.
+
+config DSC_PAIR_HTTP_CTRL_PORT
+    int "Internal control-socket port for the pairing page's HTTP server"
+    default 32769
+    help
+        esp_http_server opens a private UDP control socket alongside the
+        listener. HTTPD_DEFAULT_CONFIG() puts it on 32768 and net_wifi's
+        captive portal takes that default, so this one is moved by one for
+        the same overlap reason as DSC_PAIR_HTTP_PORT above. Not reachable
+        or useful from outside the device.
+
 endmenu

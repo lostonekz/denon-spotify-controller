@@ -7,7 +7,12 @@
 set(DSC_MAIN_SRCS "main.c" "app_start.c" "app_wiring.c" "app_wiring_core.c" "app_wiring_ticks.c"
                    "app_wiring_denon.c" "app_wiring_spotify.c" "app_wiring_artwork.c"
                    "app_wiring_ui.c"
-                   "app_wiring_volume.c" "volume_coordinator.c")
+                   "app_wiring_volume.c" "volume_coordinator.c"
+                   # Unconditional, unlike the debug/selftest sources below:
+                   # the pairing page is a product feature reachable from the
+                   # panel, not a dev tool. Its listener is still bounded --
+                   # it only exists while the pair overlay is open.
+                   "pair_http.c")
 
 # debug_console.c (docs/ROADMAP.md Phase 3's UART debug UI) only enters
 # SRCS -- and its esp_console_*() calls only ever get linked in -- when the
@@ -61,5 +66,5 @@ idf_component_register(
                  "svc_spotify" "svc_artwork"
                  "bsp_board" "hal_display" "hal_touch" "hal_backlight" "ui"
                  "console"
-    PRIV_REQUIRES "esp_netif" "esp_event"
+    PRIV_REQUIRES "esp_netif" "esp_event" "esp_http_server"
 )

@@ -49,7 +49,7 @@ Stated explicitly, because an unstated threat model is how scope creeps in both 
 | T2 | Downgrade to a known-broken firmware | monotonic `security_version`, anti-rollback | **yes** |
 | T3 | Corrupt or truncated download bricks a wall-mounted unit | SHA-256 + header validation + health gate | yes |
 | T4 | Credentials leaked through logs, diagnostics export, or a support paste | redaction by key prefix, secrets never rendered | yes |
-| T5 | Token or credential interception during setup on a shared LAN | PKCE + `state`, no on-device listener to intercept ([adr/0009](adr/0009-manual-code-paste-over-bounce-page.md)) | yes |
+| T5 | Token or credential interception during setup on a shared LAN | PKCE + single-use `state`; the pairing listener exists only while the pair overlay is open, and the `redirect_uri` still has nothing listening on it ([adr/0011](adr/0011-on-device-pair-page-over-console-paste.md)). Partial: a LAN host can read the authorize URL during that window — see §5 | partial |
 | T6 | Physical access to a resold, returned, or discarded unit | flash encryption + zeroising factory reset | production only |
 | T7 | Attacker on the local network reads or replays control traffic | — accepted, see below | — |
 
@@ -149,34 +149,43 @@ RISKS R14 (single-developer bus factor). Rotation support is the actual answer:
 
 ## 5. Setup-session hardening
 
-The WiFi provisioning stage ([NETWORKING.md §1.2](NETWORKING.md)) is the one moment the
-device deliberately opens a listener. The Spotify OAuth stage opens **no** listener at all —
-revised from an earlier draft of this document, which had OAuth running its own local HTTP
-callback receiver; see below and
-[adr/0009](adr/0009-manual-code-paste-over-bounce-page.md).
+The device deliberately opens a listener in exactly two situations, both bounded and both
+user-initiated: WiFi provisioning ([NETWORKING.md §1.2](NETWORKING.md)), and Spotify pairing
+while the pair overlay is open on the panel ([adr/0011](adr/0011-on-device-pair-page-over-console-paste.md),
+which supersedes [adr/0009](adr/0009-manual-code-paste-over-bounce-page.md)).
 
 - **SoftAP stage** — WPA2 with a per-device password derived from the MAC and shown on
   screen. Not an open AP. The portal is reachable only while provisioning is active.
-- **OAuth stage — no listener, by design.** The `redirect_uri` registered with Spotify is a
-  loopback address (`http://127.0.0.1:<port>/callback`) that nothing on the device listens
-  on. The callback is captured by the user manually pasting the browser's resulting
-  address-bar URL into the UART debug console (`spotify code <url>`,
-  [NETWORKING.md §1.2/§1.3](NETWORKING.md)). This removes an entire threat class an
-  on-device listener would otherwise carry: there is no window where another host on the LAN
-  could race the redirect, because there is no socket to race. In exchange, this requires
-  physical/USB access to the device — a strictly stronger boundary than "same WiFi network,"
-  which is all the withdrawn listener design would have required of an attacker.
-- **CSRF** — the OAuth `state` parameter is a 128-bit-class random value generated per
-  `spotify pair` attempt, held in RAM only, and validated against the pasted callback URL by
-  `spotify code` before any PKCE exchange is attempted — a mismatch is rejected outright, no
-  exchange attempted, and the nonce is cleared on success/failure/unpair. PKCE
-  `code_verifier` likewise never leaves the device.
-- **No listener outside WiFi provisioning.** The device runs no inbound service in normal
-  operation, including during Spotify pairing.
+- **OAuth redirect — still no listener.** The `redirect_uri` registered with Spotify remains a
+  loopback address (`http://127.0.0.1:<port>/callback`) that nothing listens on, on any
+  device. The redirect only ever has to reach the phone browser's own address bar. This part
+  of adr/0009 is unchanged and is what makes the flow work at all.
+- **Pairing page — a bounded listener, by design.** The panel serves
+  `http://<device>:<port>/pair` so a phone can scan a QR and paste the failed redirect URL
+  back without a serial console. It runs only while the pair overlay is open on the panel,
+  started and stopped by that screen's own `mount()`/`unmount()` — not at boot, not while
+  idle. It is a different URL on a different port from the `redirect_uri` above and is never
+  a redirect target.
+  **Known, accepted exposure:** while it is up, any host on the LAN can fetch that page and
+  read the authorize URL, including the live `state` nonce, and could complete consent with
+  its own Spotify account and POST a valid `code`+`state` before the legitimate user does —
+  pairing this panel to the attacker's account. PKCE still prevents the reverse (nobody can
+  steal or replay *our* pairing). A PIN shown on the panel would close this and was declined
+  in favour of a shorter flow; see adr/0011's Consequences for the full reasoning.
+- **CSRF** — the OAuth `state` parameter is a 128-bit-class random value generated per pairing
+  attempt, held in RAM only, and validated before any PKCE exchange is attempted — a mismatch
+  is rejected outright with no exchange. The nonce is cleared on both terminal transitions
+  (`action_enter_authorized_first_time` / `action_report_exchange_failed`), so it is genuinely
+  single-use. It previously was not: it had no expiry and survived success, failure and
+  unpair alike, which adr/0011 fixed as part of opening the LAN path. PKCE `code_verifier`
+  likewise never leaves the device.
+- **No listener in normal operation.** Outside those two windows the device runs no inbound
+  service at all.
 
 **Flagged for a human read before this ships**: this section describes a real change to the
-device's threat surface (trading a removed listener for a physical/USB-access requirement),
-not just a wording fix — it deserves a deliberate second look, not only an automated one.
+device's threat surface — a LAN-reachable pairing page bounded to one screen's lifetime,
+replacing a design that required physical/USB access — not just a wording fix. It deserves a
+deliberate second look, not only an automated one.
 
 ---
 

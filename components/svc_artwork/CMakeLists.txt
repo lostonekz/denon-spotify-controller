@@ -10,6 +10,7 @@ idf_component_register(
                   "artwork_decode.c"
                   "artwork_cache.c"
                   "artwork_service.c"
+                  "artwork_service_fetch.c"
     INCLUDE_DIRS  "include"
     REQUIRES      "core_types" "core_pool" "core_eventbus" "core_state" "net_http"
     PRIV_REQUIRES "esp_jpeg" "heap"

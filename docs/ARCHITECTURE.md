@@ -225,11 +225,12 @@ Core 1 belongs to the UI. Core 0 hosts WiFi and every network service.
 | `ui` | 1 | 4 | 12 KB | `lv_timer_handler()` loop, ~16 ms | **Never** > 2 ms |
 | `net_sup` | 0 | 6 | 4 KB | event-driven | yes |
 | `denon` | 0 | 5 | 6 KB | socket select + cmd queue | yes |
-| `intent` | 0 | 5 | 3 KB | blocks on the intent queue | yes (queue send only) |
+| `intent` | 0 | 5 | 4 KB | blocks on the intent queue | yes |
 | `spotify` | 0 | 5 | 12 KB | adaptive 1–30 s | yes |
 | `artwork` | 0 | 3 | 6 KB | on track change | yes (long) |
 | `sched` | 0 | 2 | 4 KB | periodic jobs | yes |
 | `ota` | 0 | 3 | 8 KB | created on demand, destroyed after | yes |
+| `httpd` | 0 | 5 | 4 KB | request-driven; exists only while the pair overlay is open | yes |
 | `console` | 0 | 1 | 4 KB | REPL, blocking UART read | yes |
 
 Notes that matter:
@@ -243,6 +244,10 @@ Notes that matter:
 - **`intent` blocks on the queue rather than being polled.** It replaced a 20 ms periodic
   `sched` job that woke 50 times a second to find an empty queue on almost every one. Priority
   5 matches the two services it hands intents to, so a tap doesn't pay an extra scheduling hop.
+  Its stack went 3 KB → 4 KB when `INTENT_DOMAIN_PAIRING` landed: the old size was justified
+  by "no TLS, no NVS, no deep IDF call chains", which stopped being true once this task could
+  reach `httpd_start()` and `svc_spotify_begin_pair()` (~1.4 KB peak). It would probably still
+  have fitted; the justification would not have.
 - **The UI task never calls anything that can block.** No sockets, no NVS, no I²C beyond
   the touch read, no `vTaskDelay` other than the LVGL loop's own. It drains its inbound
   event queue with a **zero timeout** at the top of each iteration, then renders.
@@ -263,9 +268,13 @@ Notes that matter:
   service to core 0 puts them alongside ESP-IDF's WiFi and LWIP tasks, and the contention is
   unproven. The table below is a starting hypothesis to be validated under load, not a
   conclusion — see [RISKS.md](RISKS.md) R1.
-- `ota` is the only task created after startup, and it exists only for the duration of an
-  update. It is created *after* `svc_artwork` has been suspended and its pool released, so
-  peak RAM during OTA stays bounded.
+- **Two tasks are created after startup rather than at boot**, and both suspend `svc_artwork`
+  first so peak RAM stays bounded. `ota` exists only for the duration of an update, created
+  *after* `svc_artwork` has been suspended and its pool released. `httpd` exists only while
+  the Spotify pair overlay is open ([adr/0011](adr/0011-on-device-pair-page-over-console-paste.md));
+  its stack comes from internal RAM via a plain `xTaskCreate`, of which this board has ~24 KB
+  free, and `svc_artwork`'s 16.7 KB contiguous TLS record buffer competes for the same pool —
+  hence the same suspend treatment.
 - `console` was not anticipated in this table's original (Phase 0) form. Phase 3 adds it as
   a UART REPL (`esp_console`) exercising `svc_denon` -- ROADMAP.md's Phase 3 bullet literally
   says *"a crude debug UI — text on screen, no theme,"* and this deliberately overrides that

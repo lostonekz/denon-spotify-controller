@@ -176,7 +176,17 @@ void svc_diagnostics_report_tick(svc_diagnostics_t *d)
         if (s_diag_task_handles[i] == NULL) {
             continue;   /* not resolved (created after this ran, or never created -- "ota") */
         }
-        ESP_LOGI(TAG, "task %-16s stack_hwm=%u words",
+        /* BYTES, not words. The vanilla FreeRTOS kernel header documents this
+         * as "in words", and this line said so for a long time -- but the
+         * ESP-IDF port diverges (same divergence as xTaskCreate's own stack
+         * argument, which is bytes here too). Proved by arithmetic against
+         * real logs rather than taken on faith: "artwork" reported 15644
+         * against a 16384-byte stack and "spotify" 4092 against 12288, both
+         * of which are impossible as words and correct as bytes. Mislabelled,
+         * this made every task look like it had 4x the headroom it has --
+         * exactly backwards for a diagnostic whose job is catching a stack
+         * budget this codebase chose being wrong. */
+        ESP_LOGI(TAG, "task %-16s stack_hwm=%u bytes",
                  DIAG_TASK_NAMES[i], (unsigned)uxTaskGetStackHighWaterMark(s_diag_task_handles[i]));
     }
 }

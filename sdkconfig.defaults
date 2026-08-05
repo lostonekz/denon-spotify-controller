@@ -105,6 +105,16 @@ CONFIG_LV_COLOR_DEPTH_16=y
 # code already exists in LVGL; this only turns it on.
 CONFIG_LV_USE_FONT_COMPRESSED=y
 
+# The Spotify pair overlay's QR code (w_qr.c). LVGL 9.5 already vendors both
+# the widget and Nayuki's qrcodegen under src/libs/qrcode -- this is a Kconfig
+# flip, not a new dependency, and does not touch the exact-pinned LVGL version
+# RISKS.md R9 protects. CONFIG_LV_USE_CANVAS (a hard requirement -- lv_qrcode
+# IS an lv_canvas) and CONFIG_LV_DRAW_SW_SUPPORT_I1 (the 1bpp format its draw
+# buffer uses; without it the code would render as a silent blank) are both
+# already enabled by the ESP-IDF port's own defaults, verified in the
+# generated sdkconfig rather than assumed.
+CONFIG_LV_USE_QRCODE=y
+
 # Real bug, found live: CONFIG_HEAP_POISONING_COMPREHENSIVE was switched on
 # here as a TEMPORARY diagnostic during the device-picker freeze
 # investigation (Phase 5 post-Tier-7 device switcher addition) to chase what

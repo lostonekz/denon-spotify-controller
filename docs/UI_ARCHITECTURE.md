@@ -97,10 +97,25 @@ not swipe, and not page dots; both were built and then removed on real-hardware 
 └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
-Order is fixed and never wraps. Now Playing is the default/boot screen. **Modals are not
-built at all** — deferred with their first real caller, since an API with zero callers is
-exactly the kind of thing to get wrong. **System screens** (boot · provisioning · reauth ·
-ota-applying · fatal) aren't built either; nothing triggers one yet.
+Order is fixed and never wraps. Now Playing is the default/boot screen. **System screens**
+(boot · provisioning · ota-applying · fatal) aren't built; nothing triggers one yet.
+
+**One overlay slot exists**, built with its first real caller (the Spotify pair screen,
+[adr/0011](adr/0011-on-device-pair-page-over-console-paste.md)) rather than speculatively.
+Deliberately one slot, not a stack — nothing here needs a modal over a modal, and a depth-N
+stack would be four more states to get wrong for no caller. Reached by tapping the System
+screen's Spotify row; `ui_router_register_overlay()` must be called *after* all four screens,
+because `register_screen()` re-parks both page-edge tabs at child index −1 on every call.
+
+**The overlay is a child of the pager, not `lv_display_get_layer_top()`** — a render-cost
+decision, not a stylistic one. `lv_refr_get_top_obj()` looks for a fully-opaque covering
+object only *within the active screen*, and uses it to skip drawing everything underneath. An
+opaque, full-size pager child wins that search, so the four screens below are never traversed.
+Anything in `layer_top` cannot: `lv_refr` draws the top/sys layers *in addition to* a full
+active-screen pass. Under §2's partial-render single-draw-buffer path that is the difference
+between one screen's worth of drawing and two. The culling depends on the overlay root staying
+genuinely opaque — `bg_opa: COVER`, `radius: 0`, no transform, **no scrim**. Adding a
+translucent scrim later would silently hand the cost back.
 
 **Navigation — three real reversals, all driven by hardware, all worth recording:**
 
@@ -126,17 +141,22 @@ typedef struct {
 } screen_if_t;
 ```
 
-- **All four screens are created once at registration and never destroyed** — not just Now
-  Playing and Denon as this line originally said. Paging must be instant and allocation-free,
-  and with no modals built there is nothing left that's created on demand.
+- **All four screens and the overlay are created once at registration and never destroyed.**
+  Paging must be instant and allocation-free, and nothing here is created on demand. That
+  matters most for the overlay: its QR canvas is a ~7.7 KB draw buffer, and this board's
+  history includes LVGL allocation failures under UI-task memory pressure. Paying it at boot
+  turns a possible mid-session hang into a deterministic `ui_app_create()` failure.
 - `ui_router_update()` only forwards to the screen currently being *looked at*. An off-screen
   screen's widgets would still do real invalidation/layout work if updated, before LVGL ever
   clips the drawing.
-- `mount`/`unmount`/`destroy` are no-op bodies on every screen today: subscriptions live in
+- `mount`/`unmount`/`destroy` are no-op bodies on all four *screens*: subscriptions live in
   each screen's own `view_model_*_apply_t` glue (driven by `ui_app_task`), not in the screen
-  vtable. The contract still stands for any future screen that does start an animation or
-  timer — `unmount` **must** stop everything it started; a leaked `lv_anim` on a hidden
-  screen is a silent frame-rate tax that is miserable to find later.
+  vtable. **The pair overlay is the first real use of these hooks** — its `mount()` submits
+  `INTENT_DOMAIN_PAIRING`/START and its `unmount()` submits STOP, which is precisely what
+  bounds the pairing HTTP listener's lifetime to the screen's. The contract still stands for
+  any future screen that starts an animation or timer — `unmount` **must** stop everything it
+  started; a leaked `lv_anim` on a hidden screen is a silent frame-rate tax that is miserable
+  to find later.
 
 ---
 
@@ -179,6 +199,7 @@ fast middle section remains) — measured, and affordable (§8, [RISKS.md](RISKS
 | `w_source_status_card` | Read-only "which source/transport is active" card, in a row of two. Used twice: Receiver's Spotify/TV-audio pair, Connection's Telnet/HTTP pair (via a no-icon variant). Deliberately **not** tappable — see below |
 | `w_info_row` | `label ......... value`, with an optional leading status dot and tone-coloured value. Every row on Connection and System |
 | `w_volume_cap_slider` | The volume safety-cap control. Amber, not green — it constrains rather than plays. Submits `INTENT_DOMAIN_SETTINGS`, the first real user of that domain (§4b) |
+| `w_qr` | A QR code on a white card, wrapping LVGL's vendored `lv_qrcode`. Used only by the pair overlay. The white card *is* the quiet zone — `lv_qrcode`'s own option leaves only the integer-division remainder, and a dark quiet zone is the most common reason a rendered code won't scan. Guards by reading the canvas size back, because `lv_qrcode_set_size()` fails silently and leaves the constructor's 130 px buffer in place, and a canvas narrower than the module count renders a blank white square with `LV_RESULT_OK` and no log |
 
 `w_source_status_card` has no click handler at all, on purpose. On the Receiver screen the
 power toggle already fully determines `input_id` as a binary choice (on → `DENON_INPUT_NET`,
@@ -198,8 +219,8 @@ per-object `lv_style_t` allocation in a loop.
 
 **Still genuinely unbuilt** (each waits on a feature that doesn't exist yet, not on UI work):
 `w_icon_toggle` (shuffle/repeat/mute), `w_volume_dial` + `w_volume_sheet` (a modal volume
-sheet — no modal infrastructure exists, §3), `w_picker` (input/listening-mode pickers),
-`w_qr` (provisioning and Spotify re-pair screens).
+sheet — the overlay slot now exists (§3), but nothing has asked for this control),
+`w_picker` (input/listening-mode pickers).
 
 Each widget owns a small `*_cfg_t` and exposes `create(parent, cfg)` plus `set_*` updaters.
 No widget reads global state or the event bus — everything arrives through its setters.

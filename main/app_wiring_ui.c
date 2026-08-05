@@ -64,6 +64,10 @@ bool app_wiring_create_ui(app_ctx_t *ctx, time_source_t clock)
         .state             = &ctx->state,
         .bus                 = &ctx->bus,
         .clock                  = clock,
+        /* Passed in rather than read in components/ui, which has no business
+         * including sdkconfig.h -- the pair overlay only needs it to build
+         * the URL its QR encodes. */
+        .pair_http_port  = (uint16_t)CONFIG_DSC_PAIR_HTTP_PORT,
     };
     if (!ui_app_create(&ctx->ui_app, &ui_cfg)) {
         ESP_LOGE(TAG, "ui_app_create failed");

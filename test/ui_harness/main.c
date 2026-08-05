@@ -29,11 +29,13 @@
 #include "screen_connection.h"
 #include "screen_denon.h"
 #include "screen_now_playing.h"
+#include "screen_pair.h"
 #include "screen_system.h"
 #include "ui_router.h"
 #include "view_model_connection_apply.h"
 #include "view_model_denon_apply.h"
 #include "view_model_now_playing_apply.h"
+#include "view_model_pair_apply.h"
 
 #define UI_HARNESS_H_RES 480
 #define UI_HARNESS_V_RES 480
@@ -42,8 +44,18 @@
 /* Depths/policies mirror main/app_wiring_core.c's real values for these
  * same topics exactly, not arbitrary numbers. Bumped from 8 for the two
  * new screens' own subscriptions (Connection's own TOPIC_DENON sub, and
- * fake_system_apply's TOPIC_NET/TOPIC_DENON/TOPIC_SPOTIFY subs). */
-#define UI_HARNESS_BUS_MAX_SUBS 16
+ * fake_system_apply's TOPIC_NET/TOPIC_DENON/TOPIC_SPOTIFY subs), then to 18
+ * for the pair overlay's own TOPIC_NET + TOPIC_SPOTIFY pair. */
+#define UI_HARNESS_BUS_MAX_SUBS 18
+
+/* Matches CONFIG_DSC_PAIR_HTTP_PORT's default. Only affects the string the QR
+ * encodes here -- nothing in this harness listens on it. */
+#define UI_HARNESS_PAIR_PORT 8080
+
+static void on_pair_overlay_close(void *ctx)
+{
+    ui_router_dismiss_overlay((ui_router_t *)ctx);
+}
 
 static void print_usage(void)
 {
@@ -165,6 +177,20 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* AFTER all four screens, exactly as ui_router_register_overlay() requires
+     * -- register_screen() re-parks both page-edge tabs at index -1 on every
+     * call, which would shuffle an earlier-registered overlay below them. */
+    static view_model_pair_apply_t pair_apply;
+    static screen_pair_ctx_t pair_screen;
+    pair_screen.intent_submit_raw = intent_provider;
+    pair_screen.on_close           = on_pair_overlay_close;
+    pair_screen.on_close_ctx      = &router;
+
+    if (!ui_router_register_overlay(&router, screen_pair_get_interface(), &pair_screen)) {
+        fprintf(stderr, "ui_harness: ui_router_register_overlay failed\n");
+        return 1;
+    }
+
     if (!view_model_now_playing_apply_init(&np_apply, &state, &bus, &router, &np_screen,
                                               intent_provider, fake_time_source_get(&fts))) {
         fprintf(stderr, "ui_harness: view_model_now_playing_apply_init failed\n");
@@ -184,6 +210,15 @@ int main(int argc, char **argv)
     if (!fake_system_apply_init(&system_apply, &state, &bus, &router, fake_time_source_get(&fts))) {
         fprintf(stderr, "ui_harness: fake_system_apply_init failed\n");
         return 1;
+    }
+
+    if (!view_model_pair_apply_init(&pair_apply, &state, &bus, &router, UI_HARNESS_PAIR_PORT)) {
+        fprintf(stderr, "ui_harness: view_model_pair_apply_init failed\n");
+        return 1;
+    }
+
+    if (ui_harness_fixture_presents_pair_overlay(fixture)) {
+        ui_router_present_overlay(&router);
     }
 
     printf("ui_harness: fixture '%s' loaded. Tap a page-edge tab to switch screens; tap transport/volume/power controls to submit intents; close the window to quit.\n",
@@ -214,6 +249,7 @@ int main(int argc, char **argv)
         view_model_denon_apply_tick(&denon_apply);
         view_model_connection_apply_tick(&connection_apply);
         fake_system_apply_tick(&system_apply);
+        view_model_pair_apply_tick(&pair_apply);
 
         uint32_t next_ms = lv_timer_handler();
         uint32_t delay_ms = (next_ms < UI_HARNESS_LOOP_MAX_DELAY_MS) ? next_ms : UI_HARNESS_LOOP_MAX_DELAY_MS;
