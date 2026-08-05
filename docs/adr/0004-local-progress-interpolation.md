@@ -37,8 +37,10 @@ displayed_ms = fix.progress_ms + (is_playing ? (now_us - fix.sampled_at_us)/1000
 
 Polling stays at 5 s while playing and awake. The progress bar runs at 60 fps.
 
-Corrections on each new fix are applied as a short ease (`THEME_MOTION_QUICK`), never as a
-jump. Drift over a 5 s window is a few milliseconds of crystal error — invisible — so
+Corrections on each new fix were intended to be applied as a short ease
+(`THEME_MOTION_QUICK`), never as a jump. **That easing was never built**: the shipped
+implementation applies the fix+offset directly with no `lv_anim` layer, and no motion token
+has a caller. The jump is small enough in practice that nothing has asked for it. Drift over a 5 s window is a few milliseconds of crystal error — invisible — so
 corrections are only ever meaningful after a seek, a track change, or a stall, which are
 exactly the cases where a brief animated catch-up looks intentional.
 

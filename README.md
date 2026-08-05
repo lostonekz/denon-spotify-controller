@@ -63,7 +63,7 @@ for the two candidate causes and the one log line that would tell them apart.
 
 | | |
 |---|---|
-| **Architecture docs** | [docs/](docs/) — 15 documents, 11 ADRs |
+| **Architecture docs** | [docs/](docs/) — 16 documents, 11 ADRs |
 | **Enforcement** | 12 gates via [tools/run_all_checks.py](tools/run_all_checks.py), dependency-free Python, also wired into `idf.py build` |
 | **Gate self-test** | [tools/test_gates.py](tools/test_gates.py) — proves the gates fail when violated |
 | **Host tests** | [test/host/](test/host/) — 53 Unity test files: codecs, FSMs, view models, policy, parsers |
@@ -95,7 +95,8 @@ cmake --build build_ui_harness
 
 # Firmware — needs ESP-IDF v5.5+ and hardware
 idf.py set-target esp32s3
-idf.py menuconfig     # WiFi credentials, Spotify client ID, feature flags
+idf.py menuconfig     # Spotify client ID, debug consoles, pairing ports
+                      # (NOT WiFi credentials -- those come from the provisioning portal)
 idf.py build flash monitor
 ```
 
@@ -149,8 +150,10 @@ Getting from "nothing on screen" to a stable picture took nine separate, indepen
 confirmed root causes on real hardware — wrong IO-expander chip and protocol, wrong pin
 assignments, a generic rather than the panel's own ST7701 init sequence, memory budgets that
 didn't fit real measured RAM, an LVGL PSRAM pool that was designed but never actually wired
-up, and that scheduler freeze, among others. Full account in RISKS.md R1's Phase 5 Tier 7
-update.
+up, and that scheduler freeze, among others. The full account — every measurement, every
+fallback tried and reverted, and all nine root causes — is in
+[docs/DISPLAY_PIPELINE.md](docs/DISPLAY_PIPELINE.md), split out of the risk register because
+it is the most expensive knowledge in this repo.
 
 ## Layout
 

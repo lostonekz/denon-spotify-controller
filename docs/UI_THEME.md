@@ -126,7 +126,11 @@ padding a hand-picked `18` rather than derived; it isn't any more.
 
 All animation goes through `lv_anim`. No manual per-frame timers, no `lv_refr_now()`.
 
-**Two of the five motion tokens are currently unused, for the same real reason:** this
+**All five motion tokens are currently unused.** No `THEME_MOTION_*_MS` symbol is
+referenced by any screen or widget: navigation became an instant jump-cut, `w_toast`
+hardcodes its own dwell and says so, and there is no backdrop to drift (`w_backdrop` was
+cut). They are kept as the design's vocabulary for the motion pass that Phase 6 has not
+run. Note the code spells them with an `_MS` suffix. The original note read:** this
 board's render path (`LV_DISPLAY_RENDER_MODE_PARTIAL`, a single small draw buffer) makes
 full-screen animation genuinely expensive, and both animations that would have used them
 were measured and removed rather than shipped choppy — `THEME_MOTION_SLOW` was the artwork

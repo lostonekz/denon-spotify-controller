@@ -136,7 +136,9 @@ scope permanently.
 ### 2.4 Policy
 
 - Check daily at a **randomised** hour (avoid a thundering herd if this ever ships to more
-  than one unit), plus on demand from Settings.
+  than one unit), plus on demand from the console. **There is no Settings screen** — the
+built UI is Receiver / Now Playing / Connection / System (see UI_SCREENS.md); references
+to a Settings screen in this file describe a UI that was never built that way.
 - Apply automatically only when **idle**: not playing, screen asleep, AVR off or on another
   input. A firmware update must never interrupt music.
 - `mandatory: true` overrides idle-waiting after a 24 h grace period.
@@ -154,7 +156,10 @@ Three tiers, by lifetime and by who owns them.
 
 ### 3.1 Compile-time — Kconfig
 
-Board pins, buffer sizes, task priorities, feature flags (`CONFIG_DSC_ENABLE_IMU`,
+Board pins, buffer sizes, task priorities, feature flags (real ones today:
+`CONFIG_DSC_FACTORY_TEST`, `CONFIG_DSC_DENON_DEBUG_CONSOLE`, `CONFIG_DSC_SPOTIFY_AUTOPAIR`,
+`CONFIG_DSC_PAIR_HTTP_PORT` — the `ENABLE_IMU`/`ENABLE_SYSLOG` symbols this line used to
+name were never created;
 `CONFIG_DSC_ENABLE_SYSLOG`), poll-interval defaults. Anything a *user* should never see.
 
 ### 3.2 Secrets — a separate NVS namespace
@@ -236,7 +241,9 @@ or future integration issues the command.
 
 ### 3.5 Factory reset
 
-Long-press in Settings, with confirmation: erase both NVS namespaces, erase the SPIFFS
+**Designed, not built** (no factory-reset entry point exists anywhere in `components/` or
+`main/`, and `svc_storage` exposes no erase or zeroise call). As designed: long-press in
+settings, with confirmation: erase both NVS namespaces, erase the SPIFFS
 cache, reboot into provisioning. The OTA slot is left alone — a factory reset should not
 also downgrade firmware.
 

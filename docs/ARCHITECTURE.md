@@ -15,6 +15,7 @@ Target: Waveshare ESP32-S3-Touch-LCD-4 (ESP32-S3 N16R8, 480x480 ST7701 RGB panel
 | [UI_SCREENS.md](UI_SCREENS.md) | 11 | Per-screen layout and behaviour (split out of the above) |
 | [UI_THEME.md](UI_THEME.md) | 11 | Colour/type/metric/motion tokens (split out of the above) |
 | [RISKS.md](RISKS.md) | 12 | Risk register |
+| [DISPLAY_PIPELINE.md](DISPLAY_PIPELINE.md) | 12 | R1's evidence: bandwidth, framebuffers, bring-up root causes |
 | [ROADMAP.md](ROADMAP.md) | 13–14 | Delivery phases, future expansion |
 | [SECURITY.md](SECURITY.md) | — | Threat model, build profiles, OTA trust chain, manufacturing |
 | [LIFECYCLE.md](LIFECYCLE.md) | — | Boot graph, readiness, restart policy, coredumps |

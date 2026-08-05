@@ -26,7 +26,8 @@ Two things make this project different:
 
 ## Decision
 
-We own the glue. Roughly 200 lines across `hal_display` and `ui_app`:
+We own the glue. Roughly 590 lines across `hal_display` and `ui_app` (this ADR originally
+estimated ~200; the growth is real and documented at each call site):
 
 - `hal_display` — ST7701 init sequence, `esp_lcd_rgb_panel` configuration, framebuffer and
   bounce-buffer allocation, VSYNC callback.
@@ -54,7 +55,7 @@ locking discipline that a port layer provides is replaced by a stronger structur
 
 **Good.** One less dependency whose version must be tracked against LVGL 9.x and ESP-IDF.
 
-**Cost.** ~200 lines of hardware glue we write, test, and maintain — including the RGB
+**Cost.** ~590 lines (originally estimated ~200) of hardware glue we write, test, and maintain — including the RGB
 panel's genuinely fiddly parts (VSYNC-synchronised buffer swap, cache invalidation for
 bounce buffers). This is exactly the code where subtle bugs produce intermittent visual
 artifacts, so it gets written during Phase 0 when it has our full attention, not squeezed in

@@ -9,7 +9,7 @@ Companion to [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```
 ui_app          owns lv_display, the root object, the event subscription,
-                and the UI task loop. Knows no screen internals. (356 lines
+                and the UI task loop. Knows no screen internals. (316 lines
                 today, not the ~150 originally estimated here — most of the
                 growth is real-hardware-finding comments, e.g. the LVGL PSRAM
                 pool/draw-buffer sizing history, not added logic.)
@@ -266,6 +266,14 @@ Layouts, per-screen behaviour, and the real findings behind each — moved to
 ---
 
 ## 7. Power-aware rendering
+
+> **Nothing in this section is built.** `svc_power` and `svc_input` do not exist — they are
+> unstarted Phase 6 work, and `components/` contains no such directories. The states, the
+> wake-on-touch ordering and the gesture recogniser below are the *design*, written in the
+> present tense, and several parts of the codebase hardcode their absence (e.g.
+> `spotify_service_task.c` pins "awake" because there is no power service to ask). Note also
+> that the gesture recogniser referenced here was superseded by §3's tap-only navigation —
+> free-drag paging was removed after real-hardware measurement.
 
 `svc_power` publishes state; the UI adapts through content, not backlight level — see below
 for why the backlight itself has only one real transition to make.

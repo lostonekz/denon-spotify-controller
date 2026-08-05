@@ -14,14 +14,18 @@ Target: ESP32-S3 N16R8 — 8 MB octal PSRAM, ~512 KB internal SRAM, 16 MB flash.
 | Allocation | Size | Notes |
 |---|---|---|
 | LCD framebuffer, 1 × 480×480×2 | 450 KiB | owned by `esp_lcd_rgb_panel` — 1 buffer, not 2; see §3 |
-| LVGL heap (PSRAM pool) | 2048 KiB | added via `lv_mem_add_pool()`; see §3 for why 512 KiB wasn't enough |
+| LVGL allocations | *shared heap* | **no dedicated pool** — LVGL uses the C-library allocator; see §3 |
 | Artwork slots, 3 × 320×320×2 | 600 KiB | current + in-flight handoff + margin (see below) |
 | JPEG staging buffer | 512 KiB | one decode at a time; see below |
-| Log ring, diagnostics | 16 KiB | |
-| **Total** | **~3.54 MiB** | **~4.46 MiB headroom** |
+| **Total (fixed allocations)** | **~1.5 MiB** | the rest of PSRAM is a shared heap LVGL draws from |
 
-That headroom is deliberate. It is what makes years of feature additions possible without
-re-architecting the memory plan.
+**The LVGL row changed meaning — the most important correction in this file.** A private
+2 MiB PSRAM pool was built and then abandoned (§3 has the full account).
+`CONFIG_LV_USE_CLIB_MALLOC=y` ships instead: `lv_malloc()` is plain `malloc()`, PSRAM-backed
+via `CONFIG_SPIRAM_USE_MALLOC`, and `ui_app.c` does no allocator setup at all. Two
+consequences: LVGL is bounded by the **shared heap, not a private pool**, so the old claim
+that its fragmentation "cannot starve networking" no longer holds ([RISKS.md](RISKS.md) R7);
+and `lv_mem_monitor()` is meaningless here and never called.
 
 **Real bug, found live (Phase 5, real hardware): the "artwork thumbs, 3 × 60×60×2, 21 KiB"
 row this table used to list here never existed in code.** It described a blurred-backdrop/
@@ -75,7 +79,7 @@ JPEG section now measures (`components/spike_phase0/spike_load_tasks.c`).
 | Allocation | Size |
 |---|---|
 | RGB bounce buffers, 2 × 480×20×2 | 38 KiB |
-| LVGL heap (static internal pool) | 24 KiB |
+| LVGL bootstrap headroom | (shared heap) |
 | WiFi + LWIP | ~60 KiB |
 | mbedTLS, 2 concurrent sessions | ~50 KiB (tuned, §4) |
 | Task stacks | ~50 KiB |
@@ -84,11 +88,9 @@ JPEG section now measures (`components/spike_phase0/spike_load_tasks.c`).
 Internal SRAM, not PSRAM, is what this design is actually rationed against. Every decision
 below that looks conservative is conservative about this table.
 
-The LVGL row above is small on purpose but not tiny: `lv_init()`'s own bootstrap (default
-display/group/style-cache setup) needs real headroom in this pool before `ui_app.c` ever gets
-a chance to add the real 2 MiB PSRAM pool from §1 — real hardware (Phase 5 Tier 7) found
-Kconfig's own stated 2 KiB floor genuinely too small for `lv_init()` to even return, not just
-too small for later widget work; 24 KiB gives that bootstrap real margin. `ui_app`'s own 12
+`CONFIG_LV_MEM_SIZE_KILOBYTES=24` is still set but **only matters for LVGL's builtin
+allocator, which this build does not use** — it is left at a sane value rather than removed.
+Real LVGL allocations land on the shared heap (§1). `ui_app`'s own 12
 KiB task stack is deliberately excluded from the "Task stacks" row above and from this
 table's internal-SRAM total: real hardware found the internal-SRAM budget too tight for it by
 the time `ui_app_create()` runs last in boot order, so it's PSRAM-backed instead
@@ -135,7 +137,7 @@ The honest rule, which is enforceable:
 |---|---|---|---|
 | Application long-lived | `app_start()` only | fixed at boot | heap hook traps late allocs |
 | Application variable-lifetime | `core_pool` fixed blocks | pool size | allocation fails, counted, degrades |
-| LVGL | 24 KiB static internal + 2 MiB PSRAM pool | 2072 KiB total | cannot touch system heap; `lv_mem_monitor` sampled |
+| LVGL | shared heap (no pool) | unbounded by design | **not** isolated from the system heap — see §1 and RISKS R7 |
 | ESP-IDF network stacks | system heap | **not ours** | budgeted by measurement, not by rule |
 | OTA | system heap, task-scoped | ~50 KiB, artwork suspended first | peak is *lower* than steady state |
 
@@ -263,27 +265,22 @@ report, now fixed by disabling it. Full account, including a third still-not-ful
 symptom (a "vertical anchor jitter" on frequently-redrawn widgets), in
 [RISKS.md](RISKS.md) R1's own 2026-08-02 update.
 
-**Why the LVGL pool grew from 512 KiB to 2 MiB (PSRAM) + 24 KiB (static internal), a real
-finding, not a redesign:** the original 512 KiB figure was never actually wired up as a real
-pool — `ui_app.c` only ever called `lv_init()` and nothing else, so LVGL ran on whatever tiny
-static pool Kconfig's `LV_MEM_SIZE_KILOBYTES` happened to be set to. Real hardware exposed
-this in two stages. First, the very first real render (the Art-forward Now Playing screen's
-rounded, layered art card) permanently froze the UI task inside LVGL's own allocator —
-`LV_USE_ASSERT_MALLOC`'s default handler is a bare `while(1);` on out-of-memory, not a clean
-failure, so this looked like a hang, not an OOM. Wiring up the real PSRAM pool via
-`lv_mem_add_pool()` (as this section always intended) was the fix — sized at 2 MiB, not the
-original 512 KiB, because LVGL's software renderer composites layers (needed for the
-rounded-corner clip the Art-forward design called for) in the layer's own color format, and a
-near-full-480×480 layer at ARGB8888 (4 B/px) is ~900 KiB, comfortably over 512 KiB before
-accounting for the rest of the object tree. Second, shrinking the static internal pool all
-the way to Kconfig's stated 2 KiB floor (the original plan, so that floor wouldn't silently
-eat into the 512 KiB PSRAM budget) turned out to be too small for `lv_init()`'s own bootstrap
-to even return — 24 KiB was the real, measured fix, still far below the old unconditional
-64 KiB default. Separately, the rounded-corner clip that originally justified sizing for a
-full-screen ARGB8888 layer was later removed entirely (a real LVGL compositing-layer bug,
-not a memory problem — see [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §4's `w_art_card` entry),
-so the 2 MiB figure now has more headroom than its own original justification strictly needs;
-not shrunk back down without a reason to, since PSRAM is not the scarce resource here.
+**How LVGL's allocator was actually settled — three stages, two of them dead ends.** The
+original 512 KiB figure was never wired up at all: `ui_app.c` only called `lv_init()`, so
+LVGL ran on whatever tiny static pool `LV_MEM_SIZE_KILOBYTES` happened to be. Real hardware
+then exposed it — the first real render (the Art-forward art card) permanently froze the UI
+task *inside* LVGL's allocator, because `LV_USE_ASSERT_MALLOC`'s default handler is a bare
+`while(1);` on OOM. That looks like a hang, not an out-of-memory.
+
+The first fix was a real 2 MiB PSRAM pool via `lv_mem_add_pool()`, sized for the ~900 KiB
+ARGB8888 compositing layer a rounded-corner clip needs. **That fix was itself later
+abandoned**: on this board `lv_mem_add_pool()` returned NULL for every PSRAM address at every
+size, while the same call against internal RAM succeeded. The shipped answer is
+`CONFIG_LV_USE_CLIB_MALLOC=y` — plain `malloc()`, which `CONFIG_SPIRAM_USE_MALLOC` already
+backs with PSRAM. No pool, no setup code (§1).
+
+The layer that justified the 2 MiB sizing is gone too: the rounded-corner clip was removed
+after a real LVGL compositing bug ([UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §4, `w_art_card`).
 
 ---
 

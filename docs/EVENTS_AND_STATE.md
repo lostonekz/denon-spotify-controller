@@ -37,7 +37,7 @@ Three mechanisms, in increasing order of cost — use the cheapest that suffices
 1. **Causal sequence IDs.** Every intent carries `seq` and the `state_version` of each domain
    it read to make its decision. A service that finds the domain has moved on since then
    re-evaluates instead of acting on a stale premise.
-2. **Acknowledgements.** Services publish `INTENT_ACCEPTED` / `INTENT_REJECTED` / 
+2. **Acknowledgements.** Services publish `INTENT_ACK_EVT_ACCEPTED` / `_REJECTED` / 
    `INTENT_SUPERSEDED` carrying the originating `seq`. This is what the view model's pending
    state (§6.3) reconciles against, and it is why pending intents can be abandoned
    deterministically rather than on a timeout alone.
@@ -58,6 +58,23 @@ coordinator table and a missing entry is a startup assertion, not a runtime surp
 
 The list is deliberately short — today it is exactly one, volume retargeting — and every
 addition to it is a design review.
+
+**The domains, and which are live.** `intent_types.h` declares seven. Five have a real
+dispatch case in `app_wiring_ticks.c`'s `dispatch_one_intent()`:
+
+| Domain | Routed to | Status |
+|---|---|---|
+| `PLAYBACK` | `svc_spotify_submit_intent()` | live |
+| `DENON` | `svc_denon_submit_intent()` | live |
+| `SETTINGS` | `settings_set_u8()` directly, then the existing `TOPIC_SETTINGS` relay | live |
+| `PAIRING` | `main/pair_http.c` — **not a `svc_*` at all**; see [adr/0011](adr/0011-on-device-pair-page-over-console-paste.md) | live |
+| `MULTI` | the coordinator table above | live |
+| `POWER` | — | **declared, dead**: no producer, no dispatch case |
+| `OTA` | — | **declared, dead**: no producer, no dispatch case |
+
+`POWER` and `OTA` have been declared since Phase 1 and never wired. That is deliberate —
+`SETTINGS` sat the same way until the volume-cap slider gave it a real payload — but a
+reader should not assume a declared domain does anything.
 
 ### 5.2 No allocation, no lifetime bugs
 
@@ -105,7 +122,7 @@ shows up as a subtly wrong screen rather than a compile error.
 
 Two mechanisms, both cheap:
 
-- **`static_assert` on every payload size.** `sizeof(playback_evt_t)` is asserted at compile
+- **`static_assert` on the event envelope.** `sizeof(event_t) <= 64` is asserted at compile
   time. Changing a payload without thinking about it is a build failure, not a runtime
   surprise.
 - **Additive-only within a major version.** New fields append to a payload struct and must
@@ -132,7 +149,7 @@ Queue overflow is not an exception, it's a design parameter. Each topic declares
 | `TOPIC_DENON` | 8 | Replace oldest | none |
 | `TOPIC_ARTWORK` | 2 | Replace oldest | none — see the note below the table |
 | intent queue* | 16 | **Drop newest + count it** — never lose an older user action | none |
-| `TOPIC_NET` | 8 | Replace oldest | none |
+| `TOPIC_NET` | 4 | Replace oldest | none |
 | `TOPIC_TOAST` | 4 | Drop newest | none |
 
 Every drop increments a counter visible in diagnostics. A rising drop count is the earliest
@@ -225,7 +242,10 @@ typedef struct {
 } app_state_t;
 ```
 
-Each domain has exactly **one** writer — the service that owns it. Nothing else may mutate
+Each domain has exactly **one** writer — the service that owns it, with one deliberate
+exception: `DOMAIN_UI` is written by `ui` itself (a legal `ui`→`core` edge), because R10's
+frame counters and R17's glyph-fallback count originate there and the bus's documented
+direction is services→UI, not the reverse. Nothing else may mutate
 it, ever. Readers call `state_store_read(h, DOMAIN_PLAYBACK, &out)` which takes a mutex,
 `memcpy`s, and releases. The lock is held for the duration of a struct copy and nothing
 else — no I/O, no allocation, no callbacks under the lock.
@@ -283,7 +303,8 @@ comprehensible.
 Anything with more than three states gets a table-driven FSM in `core_fsm`, in its own
 file, testable on the host without an ESP32:
 
-`net_wifi` · `spotify_session` · `denon_link` · `ota` · `power` · `provisioning`
+`net_wifi` · `net_wifi_provisioning` · `spotify_session` · `denon_link` · `ota`
+(no `power` FSM exists — `svc_power` was never built)
 
 Every transition is logged as `[fsm:denon_link] CONNECTED --(EVT_SOCKET_EOF)--> BACKOFF`.
 When the panel misbehaves in six months, this log is the entire debugging story.

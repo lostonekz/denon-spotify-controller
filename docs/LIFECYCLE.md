@@ -76,7 +76,9 @@ costs a field failure nobody can reproduce. The trade is not close.
 Every `teardown` is required to be **idempotent** and to release in reverse acquisition
 order. Each restartable service gets a host test that runs create → teardown → create in a
 loop and asserts pool and handle counts return to baseline. **A service without that test
-is not restartable**, regardless of what its descriptor claims — CI enforces the pairing.
+is not restartable**, regardless of what its descriptor claims. **Aspirational, not
+enforced:** no such per-service loop test exists today (only `test_supervisor_restart.c`,
+which exercises the policy against fakes), and no gate checks the pairing.
 
 ### 1.3 Fatal-state policy
 
@@ -128,8 +130,10 @@ memory excerpt, which is what makes it safe.
 - **Nothing is ever uploaded automatically.** Full dumps leave the device only via USB, or
   encrypted to a support public key baked into the image, and only on explicit user action.
 - The one-shot local HTTP export (deferred — [ROADMAP.md](ROADMAP.md), prerequisites
-  `net_http`/a wired fault screen don't exist yet) is planned as an inbound service, hardened
+  a wired fault screen doesn't exist yet; `net_http` has since Phase 2) is planned as an inbound service, hardened
   accordingly: pairing PIN shown on screen, 5-minute timeout, closes on first fetch, never
-  listening otherwise. `SECURITY.md` §5 no longer documents this pattern — it was rewritten
+  listening otherwise. `SECURITY.md` §5 documents exactly this bounded-listener pattern now, for the pairing page
+  ([adr/0011](adr/0011-on-device-pair-page-over-console-paste.md)) — this note used to say
+  it didn't, which was true only while §5 was written
   for the OAuth flow specifically (adr/0009, no listener at all) — so this mechanism's own
   real security review is still owed once it's actually built, not covered by that section.
