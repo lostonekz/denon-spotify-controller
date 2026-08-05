@@ -1,17 +1,43 @@
 # Local Development Setup
 
 What to install to actually run the checks in this repo, rather than
-round-tripping every change through CI. Three independent tiers, matching
-[README.md](../README.md)'s quick start and the three CI jobs in
+round-tripping every change through CI. Four independent tiers, matching
+[README.md](../README.md)'s quick start and the four CI jobs in
 [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 | Tier | Needs | Verifies |
 |---|---|---|
-| Architecture gates | Python 3 stdlib only | layering, limits, partitions, sdkconfig policy, pins |
-| Host tests | a C11 compiler + CMake | the Denon codec and OTA policy logic, on the dev machine |
+| Architecture gates | Python 3 stdlib only | all 12 gates: layering, LVGL symbol boundary, file/doc limits, partitions, pins, sdkconfig policy, the release/dev-key guard, and the MV + OTA vector oracles |
+| Host tests | a C11 compiler + CMake + **git and network on first run** | 53 suites: codecs, FSMs, view models, supervisor, parsers, policy |
+| SDL UI harness | the above + a few minutes for SDL2 to build | the real screens/widgets, on the desktop, no hardware |
 | Firmware | ESP-IDF v5.5+ | the actual target compile, on real hardware timing/types |
 
-Gates need nothing beyond Python. The other two are below.
+The first `cmake` configure **fetches sources over the network** — Unity and cJSON for the
+host tests, and SDL2 (built from source, several minutes) for the harness. All are pinned to
+exact tags. An air-gapped machine cannot configure these from cold.
+
+```bash
+python tools/run_all_checks.py --root .   # the gates; expect 12/12
+python tools/test_gates.py                # proves each gate fails when violated
+```
+
+Those gates also run automatically as part of `idf.py build` — `CMakeLists.txt` registers
+them as an `ALL` target, so **a layering or line-limit violation fails the firmware build**,
+not just CI. (`lvgl_boundary` is skipped there, since it needs linked objects; CI runs it
+post-link.) If a firmware build fails on something that looks nothing like a compile error,
+that's why.
+
+### Three traps that have each cost real time
+
+- **`sdkconfig` is gitignored and DERIVED from `sdkconfig.defaults`.** Editing a default has
+  **no effect** on an existing build tree — the generated `sdkconfig` already exists and
+  wins. Delete `sdkconfig` (or set the value through `menuconfig`) to pick the change up.
+  Every option added to `sdkconfig.defaults` is exactly this shape of silent no-op.
+- **The SDL harness holds its own `.exe` open on Windows.** Relinking while a harness window
+  is running fails with `Permission denied` from the linker. Close it first.
+- **Build failures with no compiler diagnostic** — a random ESP-IDF file reported as `FAILED`
+  with no `error:` line anywhere — are the local toolchain being interrupted (antivirus, most
+  likely), not your code. Re-run `idf.py build`; ninja resumes and completes.
 
 ---
 
@@ -108,6 +134,37 @@ compiler; they're harmless but unnecessary elsewhere.
 
 ---
 
+## 1c. The SDL UI harness
+
+The real `ui_router`, screens and widgets — the exact source files ESP-IDF compiles into
+component `ui` — running against LVGL + SDL2 in a desktop window, with fake `core_state`
+fixtures instead of services. This is where UI work should start; it needs no hardware and
+turns a flash-and-look cycle into a rebuild.
+
+```bash
+cmake -S test/ui_harness -B build_ui_harness
+cmake --build build_ui_harness
+./build_ui_harness/ui_harness [fixture]
+```
+
+First configure builds SDL2 from source (pinned to `release-2.30.12`) and takes a few
+minutes; after that it is incremental.
+
+Fixtures, from `test/ui_harness/fixtures/fixtures.c`:
+
+`normal` · `stale` · `reconnecting` · `unavailable` · `adversarial-utf8` · `pale-cover` ·
+`long-title-marquee` · `no-active-playback` · `pair` · `pair-nonet` · `pair-connected`
+
+The three `pair*` fixtures present the Spotify pair overlay at startup and are the only
+practical way to point a real phone camera at the QR code before flashing a build with it.
+
+It uses its **own** `lv_conf.h` (`test/ui_harness/lv_conf.h`), not `sdkconfig` — so an LVGL
+option enabled for the target must be enabled there too, or the harness renders differently
+from the device, which defeats the point. That file documents each setting it mirrors and
+why.
+
+---
+
 ## 2. ESP-IDF (firmware / Phase 0 spike)
 
 Needed only for the actual target compile — the architecture gates and host
@@ -182,9 +239,13 @@ debugging the "broken" file; retry with `-j 8` first.
 
 ```powershell
 idf.py set-target esp32s3
-idf.py menuconfig     # WiFi credentials, Spotify client ID, feature flags
+idf.py menuconfig     # Spotify client ID, debug consoles, pairing-page ports
 idf.py build -- -j 8
 ```
+
+There are **no Wi-Fi credential options in menuconfig** — credentials are entered through
+the SoftAP provisioning portal at first boot and stored in NVS
+(`components/net_wifi/net_wifi_credentials.c`). Looking for them in Kconfig is a dead end.
 
 The dev signing key (`tools/keys/dev_ota_signing.pem`) does not need
 generating by hand — see [tools/keys/README.md](../tools/keys/README.md). CI

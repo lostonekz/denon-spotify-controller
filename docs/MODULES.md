@@ -19,16 +19,22 @@ denon-spotify-controller/
 ├── dependencies.lock                   # pinned component versions, committed
 ├── tools/
 │   ├── arch_rules.json                 # allowed inter-component edges
-│   ├── check_includes.py
-│   ├── check_limits.py
-│   └── gen_assets.py                   # fonts/icons -> LVGL C arrays
+│   ├── run_all_checks.py               # runs all 12 gates; also an ALL target in CMakeLists
+│   ├── check_*.py                      # the gates themselves (includes, limits, pins, ...)
+│   ├── test_gates.py                   # proves each gate fails when violated
+│   ├── denon_mv_oracle.py              # independent MV impl -- see RISKS.md R13
+│   ├── ota_manifest_oracle.py          # same idea, for OTA manifests
+│   ├── sign_release.py  gen_manifest.py  gen_trust_anchor.py  gen_fw_version_header.py
+│   └── gen_assets.py                   # fonts/icons -> LVGL C arrays (needs Node/lv_font_conv)
 ├── docs/
-│   ├── ARCHITECTURE.md  EVENTS_AND_STATE.md  MEMORY.md  PLATFORM.md
-│   ├── UI_ARCHITECTURE.md  RISKS.md  ROADMAP.md
-│   └── adr/
+│   ├── 15 documents -- ARCHITECTURE.md is the map; DEVELOPMENT.md is where to start
+│   └── adr/                            # 11 decision records
 ├── main/
 │   ├── CMakeLists.txt
-│   └── main.c                          # ~30 lines: app_start() and nothing else
+│   ├── main.c                          # 12 lines: app_start() and nothing else
+│   ├── app_wiring_*.c                  # the composition root, split 7 ways
+│   ├── volume_coordinator.c            # adr/0007 retargeting policy (host-tested)
+│   └── pair_http.c                     # the Spotify pairing page (adr/0011)
 ├── components/
 │   │
 │   ├── bsp_board/                      # THE board file. Pins, IO expander, rails.
@@ -59,6 +65,7 @@ denon-spotify-controller/
 │   ├── svc_logging/                    # esp_log hook -> ring buffer -> optional UDP
 │   ├── svc_diagnostics/                # counters, watermarks, health snapshot
 │   ├── svc_scheduler/                  # deferred/periodic work on a shared worker
+│   ├── svc_supervisor/                 # boot graph, readiness, restart policy (LIFECYCLE.md)
 │   │
 │   ├── net_wifi/                       # connection FSM, provisioning SoftAP, backoff
 │   ├── net_http/                       # request/response, retry policy, TLS arbiter
@@ -67,7 +74,7 @@ denon-spotify-controller/
 │   ├── svc_ota/                        # manifest check, download, verify, rollback health
 │   │
 │   ├── svc_spotify/
-│   │   ├── include/spotify_service.h   # the ONLY public header
+│   │   ├── include/                    # 16 headers; spotify_service.h is the service API,
 │   │   ├── spotify_service.c           # task, lifecycle, policy
 │   │   ├── spotify_auth.c              # PKCE, refresh, token rotation
 │   │   ├── spotify_api.c               # endpoint calls, rate limiting
@@ -86,22 +93,23 @@ denon-spotify-controller/
 │   ├── svc_artwork/
 │   │   ├── artwork_service.c           # fetch task, slot lifecycle
 │   │   ├── artwork_cache.c             # generation-tagged, single-owner slot pool (not refcounted)
-│   │   ├── artwork_decode.c            # JPEG -> RGB565 at 1/2 scale
+│   │   ├── artwork_decode.c            # JPEG -> RGB565 at 1/2 scale (vendored TJpgDec)
+│   │   ├── artwork_service_fetch.c     # the fetch/decode/publish pass (split for the 400-line gate)
 │   │   └── artwork_palette.c           # dominant colour extraction  (pure, host-tested)
 │   │
-│   ├── svc_power/                      # activity timer, dim/sleep/wake FSM
-│   ├── svc_input/                      # touch -> gesture -> intent
 │   │
-│   └── ui/                             # see UI_ARCHITECTURE.md
+│   └── ui/                             # 5 screens + 1 overlay, 16 widgets, view models,
+│                                       #   ui_router (incl. the overlay slot), ui_app.
+│                                       #   Layering: UI_ARCHITECTURE.md; layouts: UI_SCREENS.md
+│
+│   NOT PRESENT: svc_power/ and svc_input/ are Phase 6 work that was never started.
+│   They have responsibility rows below because the design exists; the directories do not.
 │
 └── test/
     ├── host/                           # Unity, runs on the dev PC in CI. Fast.
-    │   ├── test_denon_codec.c
-    │   ├── test_spotify_parse.c
-    │   ├── test_poll_policy.c
-    │   ├── test_state_store.c
-    │   ├── test_eventbus.c
+    │   ├── test_*.c                     # 53 suites: codecs, FSMs, view models, policy, parsers
     │   └── fixtures/                   # captured real API/telnet payloads
+    ├── ui_harness/                     # the real ui/ tree against LVGL+SDL2 on the desktop
     └── target/                         # on-device: flash, PSRAM bandwidth, panel timing
 ```
 
@@ -141,13 +149,25 @@ Each module gets one paragraph. If it needs two, it's doing too much.
 | `svc_spotify` | Own the Spotify session: OAuth PKCE, token refresh + rotation, adaptive polling of `/v1/me/player`, intent execution, optimistic-state reconciliation. |
 | `svc_denon` | Own the AVR link: transport selection (telnet/HTTP), command queue with coalescing, parse push events, maintain `denon_state_t`. |
 | `svc_artwork` | On track change, fetch the 640 px image, decode at ½ scale to RGB565, derive a 60 px thumb and a dominant colour, publish a generation-tagged, single-owner slot handle (not refcounted). |
-| `svc_power` | Activity/idle timing, dim → sleep → wake transitions, backlight ramps, wake-on-playback, night schedule. |
-| `svc_input` | Turn raw GT911 reports into gestures (tap, drag, swipe, long-press) and then into `intent_t`. Debounce and reject palm/ghost touches. |
+| `svc_power` **(not built)** | Activity/idle timing, dim → sleep → wake transitions, backlight ramps, wake-on-playback, night schedule. |
+| `svc_input` **(not built)** | Turn raw GT911 reports into gestures (tap, drag, swipe, long-press) and then into `intent_t`. Debounce and reject palm/ghost touches. |
 
 See **[LIFECYCLE.md](LIFECYCLE.md)** for the boot dependency graph, readiness model,
 restart policy, degraded-mode rules, and coredump retention and export.
 
 ### HAL / BSP
+
+**Board:** Waveshare ESP32-S3-Touch-LCD-4 (N16R8) —
+<https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4>. That wiki is the source for the
+schematic, the panel's own ST7701 init sequence, and the CH32V003 expander's register map,
+and is worth opening before touching anything in this section.
+
+Treat it as a starting point, not as truth: Phase 0 lost most of its bring-up time to
+details that did not match this board revision — the IO expander turned out to be a
+different chip speaking a different protocol than assumed, several pin assignments were
+wrong, and the generic ST7701 init sequence produced no picture where the panel's own
+sequence worked. [RISKS.md](RISKS.md) R1's Phase 5 Tier 7 update lists all nine confirmed
+root causes. `bsp_board` is the only place any of that knowledge is allowed to live.
 
 | Module | Responsibility |
 |---|---|

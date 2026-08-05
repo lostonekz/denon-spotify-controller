@@ -1,6 +1,6 @@
 /*
  * The Spotify service: owns the "spotify" task (ARCHITECTURE.md §4: core 0,
- * prio 5, 8KB, adaptive 1-30s cadence, blocking allowed), the session FSM,
+ * prio 5, 12KB, adaptive 1-30s cadence, blocking allowed), the session FSM,
  * the playback-intent queue, and the console control-command queue.
  *
  * Target-only -- this header (and every .c file that includes it) is

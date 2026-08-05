@@ -81,6 +81,25 @@ session stuck in `AWAITING_CODE` until a reboot or a fresh pair. The console flo
 hole, but it is far easier to hit now. Logged loudly; a proper `PAIR_CANCELLED` FSM event is
 recorded in [PRODUCTION_DEFERRED.md](../PRODUCTION_DEFERRED.md).
 
+## Two architectural consequences worth stating explicitly
+
+**A UI tap now synchronously starts an HTTP server on the `intent` task.** The overlay's
+`mount()` submits `PAIRING_INTENT_START`; `app_wiring_ticks.c`'s dispatcher calls
+`pair_http_start()`, which does `httpd_start()` plus `svc_spotify_begin_pair()` (mbedTLS
+SHA-256 and a 512-byte URL buffer). That is a heavier thing than "hand an intent to a
+service queue", which is what [ARCHITECTURE.md](../ARCHITECTURE.md) §1.1's intents-flow-down
+diagram otherwise describes, and it is why that task's stack went 3 KB → 4 KB. Nothing about
+the layering rules is violated — `main` may depend on everything — but a reader of §1 alone
+would not expect the intent dispatcher to own a server's lifetime.
+
+**Two HTTP servers can now exist at once.** `net_wifi`'s captive portal takes port 80 and
+control port 32768; this one takes `CONFIG_DSC_PAIR_HTTP_PORT` / `..._CTRL_PORT` (8080 /
+32769) for exactly that reason. They are *usually* mutually exclusive — the portal runs in
+SoftAP mode during provisioning, this one needs a STA address — but a Wi-Fi drop during
+pairing can start provisioning while this server is still up, against a total
+`LWIP_MAX_SOCKETS` of 10. Hence `max_open_sockets = 3` and `lru_purge_enable` here, rather
+than the stock config.
+
 ## Alternatives rejected
 
 **Adding an `AUTHORIZED --PAIR_REQUESTED--> AWAITING_CODE` edge** to `spotify_session_fsm`, so

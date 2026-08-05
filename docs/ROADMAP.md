@@ -189,11 +189,12 @@ hardware. The animated crossfade was tried and removed: animating the artwork's 
 forced LVGL's software renderer through a real alpha-compositing layer, measured at 337ms
 for a single frame — well over R10's 100ms stall budget — so the instant-pop version above
 shipped instead ([RISKS.md](RISKS.md) R1 / [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §4).
-Explicitly deferred, not forgotten: progress-bar
-scrub (no SEEK intent or endpoint exists anywhere in this project — `spotify_intent.h`
-documents this directly), the volume badge is read-only (`w_volume_sheet`, the tap target for
-it, is Phase 6), and the heart/favorite control was cut outright, not deferred (no
-favorite/save endpoint exists to wire it to). See [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md)
+Deferred at the time, and since resolved: **progress-bar scrub was built after this was
+written** — `PLAYBACK_INTENT_SEEK` (`playback_intent_types.h`) and the drag handling in
+`w_progress_bar.c` are real, the timestamps follow your finger while dragging, and the seek
+commits once on release. The volume badge became a real live-dragging control too. The
+heart/favorite control was cut outright, not deferred (no favorite/save endpoint is wired to
+it, and the control was removed from the design rather than stubbed). See [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md)
 §4/§6 for the full, real widget catalogue and screen layout actually built (Art-forward, a
 deliberate departure from this doc's original "Balanced" card-layout description) and for one
 real, still-open follow-up (the art card's corners are square, not the intended rounded, due
@@ -206,7 +207,7 @@ platform limit), and the volume badge became a real live-dragging slider rather 
 read-only badge. The heart/favorite control stays cut: no save endpoint exists to wire it to.
 Also removed since: the per-track dynamic accent, whose only two consumers (the scrub bar's
 fill, the scrim's contrast logic) the Art-forward redesign deleted — `artwork_palette.c`
-still computes and publishes it, nothing in the UI reads it (UI_ARCHITECTURE.md §5.2).
+still computes and publishes it, nothing in the UI reads it (UI_THEME.md §5.2).
 
 This phase also absorbed real hardware bring-up work that Phase 0's own bullet list never
 named (`bsp_board`/`hal_display`/`hal_touch`) — a deliberate scope decision (Phase 0's own
@@ -222,18 +223,21 @@ invisible to any simulator or spike test. Full account in [RISKS.md](RISKS.md) R
 ## Phase 6 — Remaining screens and polish
 
 - Denon screen, Settings, modals and pickers, provisioning and re-pair screens
+  *(as originally planned. "Settings" shipped as two screens, and re-pair shipped as an
+  overlay rather than a pager screen — see the status note below.)*
 - Motion pass: every transition reviewed against the motion tokens
 - `svc_power`: dim/sleep/wake FSM, wake-on-touch consumption, wake-on-playback, night mode
 - `svc_input` gesture recognition and touch-target audit
 
 **Exit criteria:** no unstyled screens, no instant backlight steps, no dead-end states.
 
-**Screens: done. The rest of the phase: not started.**
+**Screens, modals and the re-pair flow: done. Motion pass, `svc_power`, `svc_input`: not
+started.**
 
 Three real screens shipped, replacing both stubs — the pager is now four screens
 (Receiver ← Now Playing → Connection → System), and `screen_stub.c` is deleted outright
 since nothing uses it any more. Layouts and the real mechanisms behind them are in
-[UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) §6b/§6c; two things worth naming here:
+[UI_SCREENS.md](UI_SCREENS.md) §6b/§6c; two things worth naming here:
 
 - **"Settings" became two screens, not one.** Connection (receiver host/IP, round-trip
   latency, telnet-vs-HTTP transport, an adjustable volume safety cap) and System (Wi-Fi/
@@ -256,14 +260,32 @@ somewhere. Brought a minimal single-slot overlay into `ui_router` with its first
 made `mount`/`unmount` do real work for the first time (they bound the HTTP listener's
 lifetime to the screen's), and fixed a latent `state`-nonce replay window on the way.
 
-**Still open in this phase:** pickers, provisioning screens, the motion pass, `svc_power`, and
+**Still open in this phase:** pickers — with a warning: a tappable multi-row picker
+(`w_device_picker`, for Spotify Connect device switching) **was built and then reverted**
+after a real hardware hang traced to per-object `lv_style_t` allocation in a loop. Read
+`w_source_status_card.h`'s top comment before rebuilding one. Also open: provisioning screens, the motion pass, `svc_power`, and
 `svc_input`. Modal infrastructure now exists (one overlay slot) but has only the one caller.
-Verified:
-62/62 host tests, 11/11 gates, confirmed live on real hardware — including two regressions
-that only appeared after flashing (a screen confidently reporting "the receiver is off"
-during the seconds before `svc_denon` first connects, and an eventbus subscriber array that
-was exactly full, so the new screens' subscriptions failed and took the whole boot down in a
-reboot loop).
+
+**Verified:** 53/53 host tests, 12/12 gates, and every screen confirmed live on real
+hardware — including four regressions that only appeared after flashing, which is why this
+phase's exit note names them rather than claiming a clean run:
+
+1. A screen confidently reporting "the receiver is off" during the seconds before
+   `svc_denon` first connects (`core_state`'s zero-init is indistinguishable from a real
+   powered-off reading; `meta.version != 0` is the fix).
+2. An eventbus subscriber array that was exactly full, so the new screens' subscriptions
+   failed and took the whole boot down in a reboot loop.
+3. `svc_artwork` fetching into freed memory while suspended — a real `StoreProhibited`
+   crash, latent since suspend/resume existed and only reachable once something held
+   artwork suspended for longer than an OTA does.
+4. A forced re-pair button that did nothing, because an idempotency guard protecting the
+   cached authorize URL also swallowed the explicit "give me a new one" request.
+
+**Not verified, and worth doing first if this is picked up again:** the pairing page's three
+rejection paths — a stale link (state mismatch), a paste before SNTP sync, and a paste while
+the session is not awaiting a code. Each exists specifically because
+`svc_spotify_submit_pasted_url()` returns `true` in cases that then silently do nothing, so
+they are the paths where a regression would be invisible.
 
 ---
 

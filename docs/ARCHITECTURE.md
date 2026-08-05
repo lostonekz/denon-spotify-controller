@@ -11,11 +11,15 @@ Target: Waveshare ESP32-S3-Touch-LCD-4 (ESP32-S3 N16R8, 480x480 ST7701 RGB panel
 | [MEMORY.md](MEMORY.md) | 7 | Memory budget, pools, PSRAM bandwidth, TLS arbiter |
 | [PLATFORM.md](PLATFORM.md) | 8–9 | Flash layout, OTA, configuration |
 | [NETWORKING.md](NETWORKING.md) | 10 | Connectivity FSM, provisioning, Spotify, Denon |
-| [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) | 11 | UI layering, widgets, theme, motion |
+| [UI_ARCHITECTURE.md](UI_ARCHITECTURE.md) | 11 | UI layering, router, widget catalogue |
+| [UI_SCREENS.md](UI_SCREENS.md) | 11 | Per-screen layout and behaviour (split out of the above) |
+| [UI_THEME.md](UI_THEME.md) | 11 | Colour/type/metric/motion tokens (split out of the above) |
 | [RISKS.md](RISKS.md) | 12 | Risk register |
 | [ROADMAP.md](ROADMAP.md) | 13–14 | Delivery phases, future expansion |
 | [SECURITY.md](SECURITY.md) | — | Threat model, build profiles, OTA trust chain, manufacturing |
 | [LIFECYCLE.md](LIFECYCLE.md) | — | Boot graph, readiness, restart policy, coredumps |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | — | **Start here to build anything.** Toolchain setup, host tests, harness |
+| [PRODUCTION_DEFERRED.md](PRODUCTION_DEFERRED.md) | — | What is parked rather than missing, and its prerequisites |
 | [adr/](adr/) | — | Load-bearing decisions with rationale |
 
 ---
@@ -138,36 +142,53 @@ include linter encodes this as a symbol-level exception, not a blanket `ui → h
 
 ### 1.3 Dependency injection in C
 
-No global variables, no singletons, no `extern` state. Every module is an opaque handle
-constructed with an explicit config struct that carries its dependencies:
+No ambient global state: every module is constructed with an explicit config struct carrying
+its dependencies, and nothing reaches for a singleton to find its collaborators.
+
+**The shape is a caller-allocated concrete struct, not an opaque handle.** An earlier draft
+of this section showed a `spotify_service_h` typedef and `esp_err_t` create/start/destroy
+functions; that API was never built. The real one — and `svc_denon`, `svc_artwork`, `ui_app`
+all match it — is:
 
 ```c
-/* svc_spotify/include/spotify_service.h */
-typedef struct spotify_service_s *spotify_service_h;
-
+/* svc_spotify/include/spotify_service.h — the real thing */
 typedef struct {
-    event_bus_h    bus;          /* injected */
-    http_client_h  http;         /* injected */
-    settings_h     settings;     /* injected */
-    time_source_t  clock;        /* injected — swappable for host tests */
-    uint16_t       poll_ms_playing;
-    uint16_t       poll_ms_idle;
-} spotify_service_cfg_t;
+    net_http_t      *http;          /* injected, concrete */
+    net_time_t      *time;
+    core_eventbus_t *bus;
+    core_state_t    *state_store;
+    time_source_t    clock;         /* injected vtable — swappable for host tests */
+    http_policy_t    http_policy;   /* retry/timeout policy, by value */
+    kv_store_if_t   *secure_kv;     /* injected vtable */
+    spotify_service_state_cfg_t state_cfg;
+} svc_spotify_cfg_t;
 
-esp_err_t spotify_service_create(const spotify_service_cfg_t *cfg, spotify_service_h *out);
-esp_err_t spotify_service_start(spotify_service_h h);
-esp_err_t spotify_service_suspend(spotify_service_h h);   /* used during OTA */
-esp_err_t spotify_service_resume(spotify_service_h h);
-void      spotify_service_destroy(spotify_service_h h);
+bool svc_spotify_create(svc_spotify_t *s, const svc_spotify_cfg_t *cfg);
+void svc_spotify_suspend(svc_spotify_t *s);   /* used during OTA */
+void svc_spotify_resume(svc_spotify_t *s);
 ```
 
-Anything with more than one plausible implementation is injected as a **vtable interface**,
-so host tests can substitute a fake and so the real one can be swapped at runtime:
+The caller owns the storage: `main/app_ctx.h` embeds `svc_denon_t`, `svc_spotify_t`,
+`ui_app_t` **by value**. That is what makes the whole system's memory footprint a single
+statically-sized struct rather than a graph of heap allocations.
 
-- `denon_transport_if` — telnet / HTTP / fake
-- `http_client_if` — esp_http_client / recorded-fixture replay
-- `kv_store_if` — NVS / in-memory
+Anything with more than one plausible implementation is injected as a **vtable interface**,
+so host tests can substitute a fake:
+
+- `denon_transport_if_t` — telnet / HTTP / fake
+- `kv_store_if_t` — NVS / in-memory
 - `time_source_t` — esp_timer / controllable fake
+- `intent_submit_provider_t` — the real intent queue / a recording fake
+
+HTTP is deliberately *not* on that list: it is a concrete `net_http_t *` plus a
+`http_policy_t` value, because the seam that mattered turned out to be retry/timeout policy
+rather than the client itself.
+
+**Two honest exceptions to "no global state",** both file-scope statics rather than shared
+globals, and both because their owner is genuinely a singleton with one caller:
+`main/pair_http.c` (the HTTP server handle and its request buffers — `esp_http_server` runs
+every handler on one task, so there is no reentrancy to protect against) and
+`svc_diagnostics.c`'s cached task handles. Neither is reachable from another module.
 
 Every service is created by `app_wiring.c` in dependency order and stored in a single
 `app_ctx_t` on the main task's stack-adjacent static context. That struct is the *only*
@@ -175,7 +196,15 @@ place composite ownership lives.
 
 ### 1.4 Enforcing the boundaries
 
-Architecture that isn't enforced decays within a year. Six gates in CI, all cheap:
+Architecture that isn't enforced decays within a year. `python tools/run_all_checks.py
+--root .` runs **12 gates**, all cheap and all Python-stdlib-only — and it is wired into
+`CMakeLists.txt` as an `ALL` target, so **a gate failure fails `idf.py build`**, not just
+CI. (The one exception is `lvgl_boundary`, skipped there because it needs the linked
+objects; CI runs it separately, post-link.)
+
+The numbered list below explains the *reasoning* behind the layering gates rather than
+enumerating all twelve; the full list is `GATES` in `tools/run_all_checks.py`, and README
+tabulates it.
 
 1. **Include linter** — `tools/check_includes.py` walks `components/*/`, parses `#include`
    lines, and fails on any edge violating the layer table. Allowed edges declared in
@@ -194,8 +223,10 @@ Architecture that isn't enforced decays within a year. Six gates in CI, all chea
    deliberately ([SECURITY.md](SECURITY.md) §4), so *proving it cannot ship* is a required
    gate rather than a nicety.
 5. **Restartability pairing** — any service whose descriptor claims `restart != REBOOT` must
-   have a create/teardown loop test ([LIFECYCLE.md](LIFECYCLE.md) §1.2). Claiming
-   restartability without proving it fails CI.
+   have a create/teardown loop test ([LIFECYCLE.md](LIFECYCLE.md) §1.2). Note this one is
+   **not** a gate script, unlike the other four: it is enforced by a host test
+   (`test/host/test_supervisor_restart.c`) and by review, so it fails `ctest` rather than
+   `run_all_checks.py`. Listed here because it is the same kind of promise.
 6. **File length** — `tools/check_limits.py` fails on any `.c`/`.h` over 400 lines.
 
 Gates 3, 4 and 5 exist because the corresponding architectural claims are otherwise
@@ -209,7 +240,10 @@ Split into its own document — see **[MODULES.md](MODULES.md)** for the full co
 and the responsibility table (including what each module is explicitly *not* responsible
 for, which is the more useful half).
 
-Shape: `main/` holds only a composition root. Everything else is an ESP-IDF component under
+Shape: `main/` holds the composition root — plus the few things that legitimately need
+both a service and an IDF edge (`volume_coordinator.c`, `pair_http.c`, the debug consoles
+and selftests, each gated by its own Kconfig flag where it is a dev tool). Everything else
+is an ESP-IDF component under
 `components/`, prefixed by layer — `core_*`, `svc_*`, `net_*`, `hal_*`, `bsp_*`, `ui`.
 `tools/` holds the CI gates from §1.4. `test/host/` runs on the dev machine and is where the
 protocol codecs, poll policy, view model, and FSMs are actually tested.
@@ -220,18 +254,36 @@ protocol codecs, poll policy, view model, and FSMs are actually tested.
 
 Core 1 belongs to the UI. Core 0 hosts WiFi and every network service.
 
+Task names below are the **real FreeRTOS names**, because `svc_diagnostics` keys its stack
+watermark report on them — grepping a log for a name this table invented finds nothing.
+
 | Task | Core | Prio | Stack | Cadence | Blocking allowed? |
 |---|---|---|---|---|---|
-| `ui` | 1 | 4 | 12 KB | `lv_timer_handler()` loop, ~16 ms | **Never** > 2 ms |
+| `ui_app` | 1 | 4 | 12 KB | `lv_timer_handler()` loop, ~16 ms | **Never** > 2 ms |
 | `net_sup` | 0 | 6 | 4 KB | event-driven | yes |
 | `denon` | 0 | 5 | 6 KB | socket select + cmd queue | yes |
 | `intent` | 0 | 5 | 4 KB | blocks on the intent queue | yes |
 | `spotify` | 0 | 5 | 12 KB | adaptive 1–30 s | yes |
-| `artwork` | 0 | 3 | 6 KB | on track change | yes (long) |
-| `sched` | 0 | 2 | 4 KB | periodic jobs | yes |
+| `artwork` | 0 | 3 | 16 KB | on track change | yes (long) |
+| `svc_scheduler` | **any** | 2 | 6 KB | periodic jobs | yes |
 | `ota` | 0 | 3 | 8 KB | created on demand, destroyed after | yes |
-| `httpd` | 0 | 5 | 4 KB | request-driven; exists only while the pair overlay is open | yes |
+| `httpd` | 0 | 5* | 4 KB* | request-driven; exists only while the pair overlay is open | yes |
+| `net_wifi_dns` | any | 4 | 3 KB | SoftAP provisioning only | yes |
 | `console` | 0 | 1 | 4 KB | REPL, blocking UART read | yes |
+
+Two rows need reading carefully:
+
+- **`svc_scheduler` is `tskNO_AFFINITY`** — the only unpinned task we create, so the opening
+  line above ("core 0 hosts every network service") holds for everything *except* this one,
+  which is free to land on core 1 alongside the UI. A real caveat when reasoning about UI
+  jitter, not a formatting quirk.
+- **`httpd`'s starred cells are ESP-IDF defaults, not our decision.** `pair_http.c` uses
+  `HTTPD_DEFAULT_CONFIG()` and overrides only ports, socket count, LRU purge and core — so
+  an IDF bump can change them with no diff here. Measured after a real POST: ~1820 of 4096
+  bytes free, logged by `pair_http.c` itself.
+
+Two more exist only behind build flags: `denon_selftest` and `spotify_selftest`, both
+4 KB / prio 1 / core 0.
 
 Notes that matter:
 
@@ -255,19 +307,26 @@ Notes that matter:
   want application work to starve the radio or the panel refresh.
 - `artwork` sits at priority 3 because JPEG decode is a long CPU burn. On core 0 at low
   priority it cannot preempt the UI on core 1, and it yields to the network services.
-- **Stack sizes are measured, not guessed.** `svc_diagnostics` reports
-  `uxTaskGetStackHighWaterMark` for every task on the diagnostics screen; CI's soak test
-  fails if any task drops below 25 % headroom.
+- **Stack sizes are measured, not guessed.** `svc_diagnostics` logs
+  `uxTaskGetStackHighWaterMark` over UART for a fixed list of seven tasks (`ui_app`,
+  `svc_scheduler`, `artwork`, `denon`, `spotify`, `net_sup`, `intent`) — deliberately not
+  "every task": it excludes ESP-IDF's own tasks, whose sizing this project doesn't own, and
+  `ota`, which only exists during an update. The 25 % headroom floor is a rule applied by
+  hand when reading those logs; **there is no automated soak test enforcing it** — Phase 7,
+  which owns the soak, has not run. The value is in **bytes**, not words: ESP-IDF's port
+  diverges from the vanilla FreeRTOS header on this, and reading it as words makes every
+  task look like it has 4× its real headroom.
 - Every task registers with the **task watchdog**, and **feeds it only after observable
   progress** — never once per loop iteration. A network task that feeds the watchdog at the
   top of a loop it is deadlocked inside reports itself healthy forever, which is the exact
   failure the watchdog exists to catch. Progress means: an event consumed, a request
   completed, a socket state change, or a rendered frame. A task blocked on a socket with a
   correct timeout will fail to feed and reboot — which is the desired outcome.
-- **Core assignment is provisional until Phase 0 measures it.** Pinning every network
+- **Core assignment was provisional; Phase 0 and Phase 5 Tier 7 measured it.** Pinning every network
   service to core 0 puts them alongside ESP-IDF's WiFi and LWIP tasks, and the contention is
-  unproven. The table below is a starting hypothesis to be validated under load, not a
-  conclusion — see [RISKS.md](RISKS.md) R1.
+  unproven. The table above began as a hypothesis and has since been
+  validated under real load; four task stacks moved to PSRAM on the strength of measured
+  high-water marks — see [RISKS.md](RISKS.md) R1 and [MEMORY.md](MEMORY.md) §1.
 - **Two tasks are created after startup rather than at boot**, and both suspend `svc_artwork`
   first so peak RAM stays bounded. `ota` exists only for the duration of an update, created
   *after* `svc_artwork` has been suspended and its pool released. `httpd` exists only while
@@ -330,7 +389,7 @@ table is an approval gate, not a formality.
 - **LVGL 9.x, pinned to an exact patch version.** The v8→v9 migration was breaking; we
   choose when to take that cost, not `idf.py update-dependencies`.
 - **We own the LVGL/task glue** — `esp_lvgl_port` is not used. The tick source, flush
-  callback, and UI task loop are ours (`components/ui/ui_app/ui_app.c`, 356 lines today —
+  callback, and UI task loop are ours (`components/ui/ui_app/ui_app.c` + `ui_app_screens.c` —
   most of the growth past this doc's original ~200-line estimate is real-hardware-finding
   comments, not added logic), sitting on the critical path of the top project risk (R1). See
   [adr/0008](adr/0008-own-the-lvgl-glue.md).
