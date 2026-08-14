@@ -8,6 +8,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "spotify_paste_guard.h"
+
 static const char *TAG = "pair_http";
 
 /* One request at a time, on one task, so file-static buffers are safe and
@@ -204,21 +206,21 @@ static esp_err_t handle_post_pair(httpd_req_t *req)
         return send_pair_page(req, "<p class=\"bad\">No URL was submitted.</p>");
     }
 
-    /* Both checks below MUST happen before submitting, not after.
-     * svc_spotify_submit_pasted_url() returns true in both of these cases --
-     * the clock check because the resulting CODE_PASTED command is dropped
-     * silently later on the spotify task, and the status check because
-     * spotify_session_fsm ignores CODE_PASTED outside AWAITING_CODE with no
-     * log at all. Submitting first and reporting success would be telling the
-     * user their pairing worked when nothing happened. */
-    if (!s_ctx->net_time.synced) {
+    /* Both checks MUST happen before submitting: svc_spotify_submit_pasted_url()
+     * returns true in both cases, and CODE_PASTED is then dropped silently on the
+     * spotify task (unsynced clock) or ignored outside AWAITING_CODE with no log
+     * at all -- reporting success would tell the user their pairing worked when
+     * nothing happened. The decision is spotify_paste_precondition(), host-tested. */
+    const spotify_paste_precondition_t pre =
+        spotify_paste_precondition(s_ctx->net_time.synced, current_session_status());
+    if (pre == SPOTIFY_PASTE_PRECONDITION_CLOCK_NOT_SYNCED) {
         ESP_LOGW(TAG, "paste rejected: clock not yet synced");
         return send_pair_page(req,
                               "<p class=\"bad\">The panel is still setting its clock. Wait about ten "
                               "seconds and press Finish again.</p>");
     }
 
-    if (current_session_status() != SPOTIFY_SESSION_PAIRING) {
+    if (pre == SPOTIFY_PASTE_PRECONDITION_SESSION_NOT_AWAITING) {
         ESP_LOGW(TAG, "paste rejected: session is not awaiting a code");
         return send_pair_page(req,
                               "<p class=\"bad\">The panel isn't waiting for a code right now. Reopen "

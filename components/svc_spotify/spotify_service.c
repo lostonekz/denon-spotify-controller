@@ -14,6 +14,7 @@
 #include "freertos/idf_additions.h"
 
 #include "spotify_auth.h"
+#include "spotify_paste_guard.h"
 
 static const char *TAG = "svc_spotify";
 
@@ -193,38 +194,6 @@ size_t svc_spotify_get_last_devices(svc_spotify_t *s, spotify_device_entry_t *ou
     return n;
 }
 
-/* Raw (not percent-decoded) query-param extraction -- this project's PKCE
- * code/state values are hex/base64url, which need no escaping in a query
- * string, so a full URL-decoder would be unused complexity for what a
- * manually-pasted redirect URL actually contains. */
-static bool extract_query_param(const char *url, const char *key, char *out, size_t out_cap)
-{
-    const char *q = strchr(url, '?');
-    if (q == NULL) {
-        return false;
-    }
-    q++;
-    size_t key_len = strlen(key);
-    while (*q != '\0') {
-        const char *amp     = strchr(q, '&');
-        size_t      seg_len = (amp != NULL) ? (size_t)(amp - q) : strlen(q);
-        if (seg_len > key_len && q[key_len] == '=' && strncmp(q, key, key_len) == 0) {
-            size_t val_len = seg_len - key_len - 1;
-            if (val_len >= out_cap) {
-                val_len = out_cap - 1;
-            }
-            memcpy(out, q + key_len + 1, val_len);
-            out[val_len] = '\0';
-            return true;
-        }
-        if (amp == NULL) {
-            break;
-        }
-        q = amp + 1;
-    }
-    return false;
-}
-
 bool svc_spotify_begin_pair(svc_spotify_t *s, char out_authorize_url[SPOTIFY_AUTHORIZE_URL_MAX])
 {
     return svc_spotify_begin_pair_with(s, NULL, NULL, out_authorize_url);
@@ -263,13 +232,17 @@ bool svc_spotify_submit_pasted_url(svc_spotify_t *s, const char *url)
 {
     char code[SPOTIFY_CTRL_CMD_ARG_MAX];
     char state_param[SPOTIFY_STATE_NONCE_MAX];
-    if (!extract_query_param(url, "code", code, sizeof(code)) ||
-        !extract_query_param(url, "state", state_param, sizeof(state_param))) {
+    /* Raw (not percent-decoded) extraction -- this project's PKCE
+     * code/state values are hex/base64url, which need no escaping in a
+     * query string, so a full URL-decoder would be unused complexity for
+     * what a manually-pasted redirect URL actually contains. */
+    if (!spotify_paste_extract_param(url, "code", code, sizeof(code)) ||
+        !spotify_paste_extract_param(url, "state", state_param, sizeof(state_param))) {
         return false;
     }
 
     xSemaphoreTake(s->session_lock, portMAX_DELAY);
-    bool match = (s->state.pending_state[0] != '\0') && (strcmp(s->state.pending_state, state_param) == 0);
+    bool match = spotify_paste_state_matches(s->state.pending_state, state_param);
     xSemaphoreGive(s->session_lock);
 
     if (!match) {

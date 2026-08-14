@@ -341,6 +341,14 @@ target_include_directories(test_spotify_avr_match PRIVATE
     "${REPO_ROOT}/components/svc_spotify/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
+dsc_add_host_test(test_spotify_paste_guard
+    test_spotify_paste_guard.c
+    "${REPO_ROOT}/components/svc_spotify/spotify_paste_guard.c")
+target_include_directories(test_spotify_paste_guard PRIVATE
+    "${REPO_ROOT}/components/svc_spotify/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
 dsc_add_host_test(test_spotify_intent
     test_spotify_intent.c
     "${REPO_ROOT}/components/svc_spotify/spotify_intent.c")

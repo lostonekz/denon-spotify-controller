@@ -281,11 +281,23 @@ phase's exit note names them rather than claiming a clean run:
 4. A forced re-pair button that did nothing, because an idempotency guard protecting the
    cached authorize URL also swallowed the explicit "give me a new one" request.
 
-**Not verified, and worth doing first if this is picked up again:** the pairing page's three
-rejection paths — a stale link (state mismatch), a paste before SNTP sync, and a paste while
-the session is not awaiting a code. Each exists specifically because
-`svc_spotify_submit_pasted_url()` returns `true` in cases that then silently do nothing, so
-they are the paths where a regression would be invisible.
+**The three rejection paths — now host-tested, still unverified on hardware.** The pairing
+page's stale link (state mismatch), paste before SNTP sync, and paste while the session is
+not awaiting a code each exist because `svc_spotify_submit_pasted_url()` returns `true` in
+cases that then silently do nothing, so they are the paths where a regression is invisible.
+
+All three decisions now live in `spotify_paste_guard.c` with 12 host tests
+(`test/host/test_spotify_paste_guard.c`). They could not be tested where they were: two sat
+inside `svc_spotify_submit_pasted_url()`, which takes `svc_spotify_t` and so drags in the
+`net_http_t`/`net_time_t` handles the host harness cannot compile, and the third sat in
+`main/pair_http.c` behind `esp_http_server`. The extraction moved only the decisions — the
+I/O and the user-facing wording stayed put — so behaviour is unchanged.
+
+**What that does and does not buy.** A regression in any of these now fails in CI instead of
+failing silently on a wall-mounted panel. It is not the hardware verification this note
+originally asked for; that still needs a device, exercising the three rejections end to end
+through the real pairing page. Treat the invisible-regression risk as closed and the
+on-hardware confirmation as still open.
 
 ---
 

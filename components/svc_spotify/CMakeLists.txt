@@ -16,6 +16,7 @@ idf_component_register(
                   "spotify_authorize_url.c"
                   "spotify_reauth_watch.c"
                   "spotify_avr_match.c"
+                  "spotify_paste_guard.c"
                   "spotify_intent.c"
                   "spotify_intent_ack.c"
                   "spotify_poll_policy.c"
