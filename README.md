@@ -206,3 +206,13 @@ deliberately parked, not missing — see
 [docs/PRODUCTION_DEFERRED.md](docs/PRODUCTION_DEFERRED.md). **One item there is a real
 prerequisite before this device goes anywhere but a personal wall:** the pairing page's
 accepted LAN exposure, recorded in [docs/adr/0011](docs/adr/0011-on-device-pair-page-over-console-paste.md).
+
+## Licence
+
+[Apache-2.0](LICENSE). Chosen over MIT for the explicit patent grant, which is
+the clause that matters for firmware anyone might put near a product.
+
+The fonts are not covered by it. `tools/font_sources/` holds Archivo, IBM Plex
+Mono and two Noto faces under the SIL Open Font License, each with its licence
+text alongside it, and the generated `components/ui/assets/fonts/ui_font_*.c`
+are derived from them. The OFL travels with the files, as it requires.
