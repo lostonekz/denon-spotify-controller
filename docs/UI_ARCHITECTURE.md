@@ -267,13 +267,23 @@ Layouts, per-screen behaviour, and the real findings behind each — moved to
 
 ## 7. Power-aware rendering
 
-> **Nothing in this section is built.** `svc_power` and `svc_input` do not exist — they are
-> unstarted Phase 6 work, and `components/` contains no such directories. The states, the
-> wake-on-touch ordering and the gesture recogniser below are the *design*, written in the
-> present tense, and several parts of the codebase hardcode their absence (e.g.
-> `spotify_service_task.c` pins "awake" because there is no power service to ask). Note also
-> that the gesture recogniser referenced here was superseded by §3's tap-only navigation —
-> free-drag paging was removed after real-hardware measurement.
+> **Partly built, and the parts differ.** `svc_power` now exists
+> (`components/svc_power/`): it sleeps the panel after
+> `CONFIG_DSC_SCREEN_SLEEP_AFTER_MIN` of inactivity (touch *or* a real playback change),
+> wakes on touch, and consumes that wake-touch rather than delivering it — the ordering
+> described below. What is **not** built is every state between on and off: there is no
+> `DIM`, no ramp and no night mode, because `hal_backlight` is binary on/off. Two states,
+> so there is also no FSM (EVENTS_AND_STATE.md §6.4).
+>
+> `svc_input` still does not exist, and `components/` contains no such directory. The
+> gesture recogniser below is *design* written in the present tense, and was in any case
+> superseded by §3's tap-only navigation — free-drag paging was removed after real-hardware
+> measurement.
+>
+> One hardcoded absence outlives the change: `spotify_service_task.c` still pins "awake" in
+> its poll-cadence decision rather than asking `svc_power`. Backing off polling while the
+> panel is dark is now *possible* and was not before, but it is a behaviour change to
+> Spotify's rate-limit profile and was deliberately left out of the sleep work.
 
 `svc_power` publishes state; the UI adapts through content, not backlight level — see below
 for why the backlight itself has only one real transition to make.

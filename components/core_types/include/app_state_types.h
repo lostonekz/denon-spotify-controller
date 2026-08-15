@@ -173,9 +173,27 @@ typedef struct {
                                                     IDs). 0 until the first real measurement. */
 } denon_state_t;
 
+/* The values power_state_t.power_state and power_evt_t.power_state carry.
+ * Both stay uint8_t rather than being retyped to this enum: power_evt_t is
+ * an event payload inside event_t's fixed 64-byte union, and
+ * EVENTS_AND_STATE.md §5.2b's additive-only rule forbids retyping a field
+ * in place. Same shape as net_evt_t's own uint8_t provisioning_state.
+ *
+ * Two states, deliberately -- so §6.4's "anything with more than three
+ * states gets a core_fsm table" does NOT apply here, and svc_power stays a
+ * threshold comparison rather than a state machine. There is no DIM state
+ * because hal_backlight is binary on/off (hal_backlight.h); real
+ * percentage dimming needs the CH32V003 PWM path that header documents as
+ * possible but unbuilt. backlight_pct is therefore only ever 0 or 100
+ * today -- it is not a lie, just a coarse instrument. */
+typedef enum {
+    POWER_MODE_ACTIVE = 0,
+    POWER_MODE_ASLEEP,
+} power_mode_t;
+
 typedef struct {
     domain_meta_t meta;
-    uint8_t       power_state;
+    uint8_t       power_state;     /* a power_mode_t value */
     uint8_t       backlight_pct;
 } power_state_t;
 

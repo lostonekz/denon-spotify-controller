@@ -448,6 +448,27 @@ target_include_directories(test_volume_coordinator PRIVATE
     "${REPO_ROOT}/components/core_types/include"
     "${CMAKE_CURRENT_LIST_DIR}")
 
+# --- Phase 6: svc_power's inactivity threshold ---------------------------
+# svc_power decides but never actuates (svc cannot reach hal), which is
+# precisely what makes the 30-minute threshold testable here instead of by
+# waiting half an hour in front of the panel.
+
+dsc_add_host_test(test_svc_power
+    test_svc_power.c
+    fake_lock.c
+    fake_time_source.c
+    "${REPO_ROOT}/components/svc_power/svc_power.c"
+    "${REPO_ROOT}/components/core_eventbus/core_eventbus.c"
+    "${REPO_ROOT}/components/core_pool/core_pool_ring.c"
+    "${REPO_ROOT}/components/core_state/core_state.c")
+target_include_directories(test_svc_power PRIVATE
+    "${REPO_ROOT}/components/svc_power/include"
+    "${REPO_ROOT}/components/core_eventbus/include"
+    "${REPO_ROOT}/components/core_pool/include"
+    "${REPO_ROOT}/components/core_state/include"
+    "${REPO_ROOT}/components/core_types/include"
+    "${CMAKE_CURRENT_LIST_DIR}")
+
 # --- Phase 5 Tier 1: components/ui/'s pure view_model/theme modules ------
 
 dsc_add_host_test(test_view_model_tone

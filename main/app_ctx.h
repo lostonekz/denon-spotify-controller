@@ -29,6 +29,7 @@
 #include "svc_diagnostics.h"
 #include "svc_logging.h"
 #include "svc_ota.h"
+#include "svc_power.h"
 #include "svc_scheduler.h"
 #include "svc_settings.h"
 #include "svc_storage.h"
@@ -58,13 +59,19 @@
  * with the subscriber rather than after the fact this time, since the
  * failure mode is the boot-fatal crash loop described above and not
  * anything that shows up at compile time. Not a hard architectural limit,
- * raise it when a real subscriber needs more room. */
-#define APP_EVENTBUS_MAX_SUBS       20
+ * raise it when a real subscriber needs more room. Phase 6's svc_power adds
+ * 2 more -- its own TOPIC_PLAYBACK subscription (a legal svc->core edge,
+ * same as svc_artwork's) and app_wiring's TOPIC_POWER subscription for the
+ * backlight relay -- 22 total. */
+#define APP_EVENTBUS_MAX_SUBS       22
 /* TOPIC_SETTINGS/TOPIC_DIAG (Phase 1) + TOPIC_NET/TOPIC_TIME/TOPIC_OTA
  * (Phase 2) + TOPIC_DENON (Phase 3) + TOPIC_PLAYBACK/TOPIC_SPOTIFY/
  * TOPIC_ARTWORK/TOPIC_INTENT_ACK (Phase 4) + TOPIC_TOAST (Phase 5 Tier 6 --
- * w_toast's real consumer, view_model_now_playing_apply_t). */
-#define APP_EVENTBUS_TOPIC_POLICIES 11
+ * w_toast's real consumer, view_model_now_playing_apply_t) + TOPIC_POWER
+ * (Phase 6 -- declared since Phase 1, first registered here; without the
+ * entry svc_power's own subscribe fails and boot fails with it, exactly the
+ * way TOPIC_TOAST did). */
+#define APP_EVENTBUS_TOPIC_POLICIES 12
 
 /* Every service that has a service_desc_t: Phase 1's storage/scheduler/
  * logging/settings/diagnostics (5) + Phase 2's net_wifi/net_time/net_http/
@@ -161,6 +168,15 @@ typedef struct {
     hal_display_t          hal_display;
     hal_touch_t               hal_touch;
     ui_app_t                    ui_app;
+
+    /* --- power (Phase 6): the inactivity timer. svc_power owns the
+     * decision and DOMAIN_POWER; this subscription is app_wiring's half,
+     * because turning the backlight off is a hal call svc may not make
+     * (arch_rules.json). See main/app_wiring_power.c. --- */
+    svc_power_t            svc_power;
+    eventbus_sub_h           power_sub;   /* TOPIC_POWER, relayed into hal_backlight + ui_app */
+    event_t                    power_sub_storage[4];
+    scheduler_job_h              power_tick_job;
 
     /* --- lifecycle --- */
     service_desc_t       service_descs[APP_SUPERVISOR_MAX_SERVICES];

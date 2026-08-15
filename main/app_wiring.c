@@ -11,6 +11,7 @@
 #include "app_wiring_artwork.h"
 #include "app_wiring_core.h"
 #include "app_wiring_denon.h"
+#include "app_wiring_power.h"
 #include "app_wiring_spotify.h"
 #include "app_wiring_ticks.h"
 #include "app_wiring_ui.h"
@@ -38,22 +39,9 @@ static time_source_t real_clock(void)
     return t;
 }
 
-/* svc_scheduler tick trampolines (app_wiring owns scheduling; the services
- * themselves have no svc_scheduler dependency -- see svc_settings.h/
- * svc_diagnostics.h) live in app_wiring_ticks.c, split out purely for the
- * 400-line gate. */
-
-#define SETTINGS_TICK_PERIOD_US    ((int64_t)1 * 1000000)
-#define DIAGNOSTICS_TICK_PERIOD_US ((int64_t)5 * 1000000)
-#define NET_TIME_TICK_PERIOD_US    ((int64_t)1 * 1000000)
-#define SVC_OTA_TICK_PERIOD_US     ((int64_t)1 * 1000000)
-#define HEALTH_GATE_TICK_PERIOD_US ((int64_t)1 * 1000000)
-#define DENON_SETTINGS_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
-/* No INTENT_DISPATCH_TICK_PERIOD_US anymore: intent dispatch is a task
- * blocking on the queue rather than a periodic job polling it, which beats
- * the ~20-50ms docs/ROADMAP.md Phase 3 asked for outright (dispatch starts
- * on arrival) while removing 50 scheduler wakeups/second. */
-#define OTA_ARTWORK_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
+/* The *_TICK_PERIOD_US constants and the trampolines they schedule both
+ * live in app_wiring_ticks.h now -- a period and the function it drives are
+ * one fact, and app_wiring.c was at the 400-line gate. */
 
 /* docs/NETWORKING.md §1.6, verbatim -- "OTA...gets a different policy" is
  * not true yet in Phase 2 (only one real net_http caller exists), so this
@@ -260,6 +248,14 @@ bool app_wiring_create(app_ctx_t *ctx)
 
     if (!app_wiring_create_ui(ctx, clock)) {
         return false;   /* app_wiring_create_ui() already logged the reason */
+    }
+
+    /* --- power (Phase 6): must follow ui -- its tick reads
+     * ui_app_touch_idle_ms(), and it registers its own scheduler job onto
+     * a worker that is already running --- */
+
+    if (!app_wiring_create_power(ctx, clock)) {
+        return false;   /* app_wiring_create_power() already logged the reason */
     }
 
     /* --- lifecycle: collect every service's own descriptor, validate the

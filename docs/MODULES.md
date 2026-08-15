@@ -102,8 +102,12 @@ denon-spotify-controller/
 │                                       #   ui_router (incl. the overlay slot), ui_app.
 │                                       #   Layering: UI_ARCHITECTURE.md; layouts: UI_SCREENS.md
 │
-│   NOT PRESENT: svc_power/ and svc_input/ are Phase 6 work that was never started.
-│   They have responsibility rows below because the design exists; the directories do not.
+│   ├── svc_power/                      # Inactivity timer, sole writer of DOMAIN_POWER.
+│   │                                   #   Decides only -- app_wiring_power.c actuates the
+│   │                                   #   backlight, since svc may not depend on hal.
+│   │
+│   NOT PRESENT: svc_input/ is Phase 6 work that was never started. It has a responsibility
+│   row below because the design exists; the directory does not.
 │
 └── test/
     ├── host/                           # Unity, runs on the dev PC in CI. Fast.
@@ -149,7 +153,7 @@ Each module gets one paragraph. If it needs two, it's doing too much.
 | `svc_spotify` | Own the Spotify session: OAuth PKCE, token refresh + rotation, adaptive polling of `/v1/me/player`, intent execution, optimistic-state reconciliation. |
 | `svc_denon` | Own the AVR link: transport selection (telnet/HTTP), command queue with coalescing, parse push events, maintain `denon_state_t`. |
 | `svc_artwork` | On track change, fetch the 640 px image, decode at ½ scale to RGB565, derive a 60 px thumb and a dominant colour, publish a generation-tagged, single-owner slot handle (not refcounted). |
-| `svc_power` **(not built)** | Activity/idle timing, dim → sleep → wake transitions, backlight ramps, wake-on-playback, night schedule. |
+| `svc_power` | Activity/idle timing and sleep → wake, on a `CONFIG_DSC_SCREEN_SLEEP_AFTER_MIN` threshold (default 30). Activity is touch *or* a real playback change; `PLAYBACK_EVT_POSITION` is deliberately excluded, or it could never sleep. Decides only — it publishes `TOPIC_POWER` and writes `DOMAIN_POWER`; `main/app_wiring_power.c` turns the backlight off, because `svc` may not depend on `hal`. **Not built:** dim, backlight ramps, night schedule — all three need the PWM path `hal_backlight.h` describes as possible but unbuilt. |
 | `svc_input` **(not built)** | Turn raw GT911 reports into gestures (tap, drag, swipe, long-press) and then into `intent_t`. Debounce and reject palm/ghost touches. |
 
 See **[LIFECYCLE.md](LIFECYCLE.md)** for the boot dependency graph, readiness model,

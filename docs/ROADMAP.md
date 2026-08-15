@@ -231,8 +231,17 @@ invisible to any simulator or spike test. Full account in [RISKS.md](RISKS.md) R
 
 **Exit criteria:** no unstyled screens, no instant backlight steps, no dead-end states.
 
-**Screens, modals and the re-pair flow: done. Motion pass, `svc_power`, `svc_input`: not
-started.**
+**Screens, modals and the re-pair flow: done. Motion pass and `svc_input`: not started.**
+
+**`svc_power`: partly built.** Sleep-on-inactivity, wake-on-touch (with the wake-touch
+consumed, not delivered) and wake-on-playback all work, on a
+`CONFIG_DSC_SCREEN_SLEEP_AFTER_MIN` threshold defaulting to 30 minutes. Three items from the
+line above are *not* built and all three block on the same thing — `hal_backlight` exposes
+binary on/off, so there is no intermediate level: **dim**, **backlight ramps** and **night
+mode**. The FSM is also deliberately absent rather than pending: two states is under
+EVENTS_AND_STATE.md §6.4's bar for a `core_fsm` table. Note the exit criterion "no instant
+backlight steps" is therefore still unmet — the panel currently blinks off, and closing that
+needs the CH32V003 PWM register `hal_backlight.h` documents.
 
 Three real screens shipped, replacing both stubs — the pager is now four screens
 (Receiver ← Now Playing → Connection → System), and `screen_stub.c` is deleted outright

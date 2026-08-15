@@ -200,4 +200,31 @@ config DSC_PAIR_HTTP_CTRL_PORT
         the same overlap reason as DSC_PAIR_HTTP_PORT above. Not reachable
         or useful from outside the device.
 
+config DSC_SCREEN_SLEEP_AFTER_MIN
+    int "Turn the screen off after N minutes of inactivity (0 = never)"
+    default 30
+    range 0 1440
+    help
+        svc_power turns the backlight off once BOTH the user and the music
+        have been quiet for this long. 0 disables sleep entirely and pins
+        the panel on.
+
+        "Inactivity" means no touch AND no music change. A track change,
+        play/pause, shuffle/repeat, or a device change all count as
+        activity, so the panel stays lit for as long as something is
+        actually playing and only starts counting down once the music
+        stops. Playback POSITION updates deliberately do NOT count -- they
+        arrive on every poll while a track plays, so counting them would
+        mean the screen never slept at all (svc_power.c says the same
+        thing at the switch that excludes them).
+
+        The touch that wakes the panel is swallowed rather than delivered,
+        so waking the device cannot also press whatever was under your
+        finger -- on Now Playing that would be the transport row.
+
+        A Kconfig value rather than a runtime setting because there is no
+        Settings screen to change it from (the built UI is Receiver / Now
+        Playing / Connection / System), and a typed setting nothing can
+        write is a migration cost with no payoff.
+
 endmenu

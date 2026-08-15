@@ -67,6 +67,17 @@ bool app_wiring_create_bus(app_ctx_t *ctx, os_lock_if_t bus_lock)
         .topic = TOPIC_TOAST, .depth = 4, .on_full = EVENT_OVERFLOW_DROP_NEWEST,
         .on_release = NULL, .release_ctx = NULL,
     };
+    /* Phase 6: declared in EVENTS_AND_STATE.md §5.4 since Phase 1, first
+     * given a producer (svc_power) and a policy here. Replace-oldest
+     * because only the newest power state matters -- a dropped intermediate
+     * ACTIVE/ASLEEP is not a lost user action, unlike TOPIC_TOAST above.
+     * Depth 4 is generous for a topic that changes at human timescales; it
+     * costs 4 event_t of caller-owned storage per subscriber and buys
+     * immunity to a relay tick being late. */
+    ctx->bus_topic_policies[11] = (topic_policy_t){
+        .topic = TOPIC_POWER, .depth = 4, .on_full = EVENT_OVERFLOW_REPLACE_OLDEST,
+        .on_release = NULL, .release_ctx = NULL,
+    };
     core_eventbus_init(&ctx->bus, ctx->bus_subs, APP_EVENTBUS_MAX_SUBS,
                         ctx->bus_topic_policies, APP_EVENTBUS_TOPIC_POLICIES,
                         bus_lock);

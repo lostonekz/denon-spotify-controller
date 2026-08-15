@@ -33,6 +33,7 @@
     "svc_supervisor":  "svc",
     "svc_logging":   "svc",
     "svc_scheduler": "svc",
+    "svc_power":     "svc",
     "net_http":      "net",
     "net_wifi":      "net",
     "net_time":      "net",
