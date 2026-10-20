@@ -1,0 +1,23 @@
+# Configuração do gitleaks para o denon-spotify-controller.
+
+title = "denon-spotify-controller — secret scanning rules"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Permite chaves de desenvolvimento e artefatos de build"
+regexTarget = "line"
+regexes = [
+  '''tools/keys/dev_ota_signing\.pem''',
+  '''tools/keys/README\.md''',
+  '''PLACEHOLDER'''
+]
+paths = [
+  '''build/''',
+  '''build_host/''',
+  '''build_asan/''',
+  '''build_ui_harness/''',
+  '''managed_components/''',
+  '''tools/keys/'''
+]
