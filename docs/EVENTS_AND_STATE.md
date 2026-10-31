@@ -69,7 +69,7 @@ dispatch case in `app_wiring_ticks.c`'s `dispatch_one_intent()`:
 | `SETTINGS` | `settings_set_u8()` directly, then the existing `TOPIC_SETTINGS` relay | live |
 | `PAIRING` | `main/pair_http.c` — **not a `svc_*` at all**; see [adr/0011](adr/0011-on-device-pair-page-over-console-paste.md) | live |
 | `MULTI` | the coordinator table above | live |
-| `POWER` | — | **declared, dead**: no producer, no dispatch case |
+| `POWER` | — | **declared, dead**: no producer, no dispatch case. Note this is the *intent* domain — `TOPIC_POWER` and `DOMAIN_POWER` both became live in Phase 6 with `svc_power`, which sleeps the panel on a timer rather than on a user intent. Nothing submits an `INTENT_DOMAIN_POWER` yet; `svc_power_wake()` is where one would land. |
 | `OTA` | — | **declared, dead**: no producer, no dispatch case |
 
 `POWER` and `OTA` have been declared since Phase 1 and never wired. That is deliberate —
@@ -304,7 +304,13 @@ Anything with more than three states gets a table-driven FSM in `core_fsm`, in i
 file, testable on the host without an ESP32:
 
 `net_wifi` · `net_wifi_provisioning` · `spotify_session` · `denon_link` · `ota`
-(no `power` FSM exists — `svc_power` was never built)
+
+**No `power` FSM exists, and that is now a decision rather than an absence.** `svc_power` is
+built (Phase 6) but has exactly two states, `POWER_MODE_ACTIVE` and `POWER_MODE_ASLEEP` —
+under this section's own "more than three states" bar. A two-row transition table would be
+more machinery than the threshold comparison it wrapped. If a `DIM` state ever lands (it
+needs the CH32V003 PWM path `hal_backlight.h` describes as possible but unbuilt), that is the
+point to revisit this.
 
 Every transition is logged as `[fsm:denon_link] CONNECTED --(EVT_SOCKET_EOF)--> BACKOFF`.
 When the panel misbehaves in six months, this log is the entire debugging story.

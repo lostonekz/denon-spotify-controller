@@ -214,7 +214,12 @@ instability that looks like a software bug.
 **Mitigation.** Log the internal temperature sensor in diagnostics from day one; check it
 during the soak test; treat the enclosure as a design deliverable, not an afterthought.
 Night dimming would reduce the largest heat source (**not built** — `hal_backlight` is
-on/off only and there is no `svc_power` to schedule it).
+on/off only, so there is no level to dim *to*). `svc_power` now exists and does schedule the
+backlight, but only to turn it fully off after `CONFIG_DSC_SCREEN_SLEEP_AFTER_MIN` of
+inactivity (default 30). That is a real and probably larger reduction in the same heat source
+than dimming would have been — an idle wall-mounted panel is dark rather than dimmed — but it
+is driven by inactivity, not by the clock, so it does nothing for a panel being actively
+watched at midnight. A night schedule still needs the PWM path.
 
 ---
 

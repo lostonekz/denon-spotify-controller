@@ -6,7 +6,7 @@
 
 set(DSC_MAIN_SRCS "main.c" "app_start.c" "app_wiring.c" "app_wiring_core.c" "app_wiring_ticks.c"
                    "app_wiring_denon.c" "app_wiring_spotify.c" "app_wiring_artwork.c"
-                   "app_wiring_ui.c"
+                   "app_wiring_ui.c" "app_wiring_power.c"
                    "app_wiring_volume.c" "volume_coordinator.c"
                    # Unconditional, unlike the debug/selftest sources below:
                    # the pairing page is a product feature reachable from the
@@ -63,7 +63,7 @@ idf_component_register(
                  "svc_storage" "svc_scheduler" "svc_logging" "svc_settings"
                  "svc_diagnostics" "svc_supervisor"
                  "net_wifi" "net_time" "net_http" "svc_ota" "svc_denon"
-                 "svc_spotify" "svc_artwork"
+                 "svc_spotify" "svc_artwork" "svc_power"
                  "bsp_board" "hal_display" "hal_touch" "hal_backlight" "ui"
                  "console"
     PRIV_REQUIRES "esp_netif" "esp_event" "esp_http_server"

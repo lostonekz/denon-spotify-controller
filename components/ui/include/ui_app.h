@@ -128,6 +128,28 @@ typedef struct {
                                                               (app_state_types.h's own comment
                                                               on ui_diag_state_t) doesn't need
                                                               publishing at LVGL's own cadence */
+
+    /* --- Phase 6, svc_power's inactivity timer ---
+     *
+     * Raw touch activity is tracked here rather than read back from LVGL's
+     * own lv_display_get_inactive_time(), because the wake-touch is
+     * deliberately withheld from LVGL (touch_read_cb): LVGL's timer would
+     * never see the one touch that is supposed to wake the panel, so it
+     * would report the display as still idle and it could never wake. This
+     * timestamp is taken from the raw GT911 read, before any suppression. */
+    volatile int64_t          last_touch_us;
+
+    /* Written by app_wiring off TOPIC_POWER (a different task), read by
+     * touch_read_cb on the UI task. volatile and word-sized: the worst a
+     * torn read could do is mis-handle a single touch on the exact tick the
+     * panel slept, and the following poll corrects it -- not worth a mutex
+     * in a callback LVGL invokes at input-poll rate. */
+    volatile bool             display_asleep;
+
+    /* UI-task-only, never touched from outside. Holds suppression until the
+     * finger actually lifts, so waking mid-press cannot hand LVGL half a
+     * gesture that starts wherever the wake-touch happened to land. */
+    bool                      swallow_touch_until_release;
 } ui_app_t;
 
 /* cfg->hal_disp/hal_touch/state/bus must already be initialized. Creates
@@ -147,6 +169,19 @@ void ui_app_teardown(void *handle);
  * "a frame actually reached the panel" signal, not just "init returned
  * ESP_OK." Feeds HEALTH_COND_PANEL_UI. */
 bool ui_app_has_rendered_frame(const ui_app_t *app);
+
+/* Milliseconds since the last raw touch, saturating rather than wrapping
+ * (an untouched panel passes UINT32_MAX ms after ~49 days, and a wrap there
+ * would silently look like fresh activity). Polled by app_wiring and fed to
+ * svc_power_tick() -- svc cannot reach the UI, so the value is carried
+ * across by the composition root. */
+uint32_t ui_app_touch_idle_ms(const ui_app_t *app);
+
+/* Told to the UI by app_wiring when TOPIC_POWER changes. The only effect is
+ * that the next touch is swallowed instead of pressed -- ui does not turn
+ * the backlight on or off, and does not read DOMAIN_POWER for this (a
+ * legal edge, but one more thing to keep in sync than a single setter). */
+void ui_app_set_display_asleep(ui_app_t *app, bool asleep);
 
 /* Same reasoning as hal_display.h's SVC_HAL_DISPLAY_SERVICE_DESC: reboot,
  * degraded_ok=false (LIFECYCLE.md §1.1, Phase 5 plan §9), no restart path

@@ -194,7 +194,9 @@ are in [docs/UI_ARCHITECTURE.md](docs/UI_ARCHITECTURE.md).
 
 ## Not here yet, on purpose
 
-`svc_power` (dim/sleep/wake), `svc_input` gesture recognition, the motion pass, and the
+`svc_power`'s **dim** state (the panel sleeps and wakes, but `hal_backlight` is binary
+on/off, so there is no ramp and no intermediate level), `svc_input` gesture recognition, the
+motion pass, and the
 remaining widget catalogue (`w_picker`, `w_icon_toggle`, `w_volume_dial`) are the unbuilt
 part of Phase 6 — see [docs/ROADMAP.md](docs/ROADMAP.md).
 

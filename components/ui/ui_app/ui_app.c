@@ -77,7 +77,11 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    hal_touch_t *touch = (hal_touch_t *)lv_indev_get_user_data(indev);
+    /* user_data is the whole ui_app_t, not just hal_touch, since Phase 6:
+     * this callback is now also where raw touch activity is timestamped for
+     * svc_power and where the wake-touch is suppressed. */
+    ui_app_t    *app   = (ui_app_t *)lv_indev_get_user_data(indev);
+    hal_touch_t *touch = app->hal_touch;
 
     data->state = LV_INDEV_STATE_RELEASED;
 
@@ -89,11 +93,57 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 
     esp_lcd_touch_point_data_t point = { 0 };
     uint8_t                    point_cnt = 0;
-    if (esp_lcd_touch_get_data(touch->handle, &point, &point_cnt, 1) == ESP_OK && point_cnt > 0) {
+    bool pressed = (esp_lcd_touch_get_data(touch->handle, &point, &point_cnt, 1) == ESP_OK
+                     && point_cnt > 0);
+
+    /* Timestamped from the RAW read, before any suppression below -- this
+     * is the signal that wakes the panel, so it must survive the very
+     * suppression that waking causes (ui_app.h's last_touch_us comment). */
+    if (pressed) {
+        app->last_touch_us = esp_timer_get_time();
+    }
+
+    /* The wake-touch: it turns the screen back on and does nothing else.
+     * Without this, tapping a dark panel would press whatever happens to be
+     * underneath -- on the Now Playing screen that is the transport row, so
+     * waking the device could pause the music it is displaying.
+     *
+     * Suppression is held until the finger lifts rather than cleared on the
+     * next poll, because a press that began while asleep must not become a
+     * half-gesture the moment app_wiring clears display_asleep mid-touch. */
+    if (pressed && app->display_asleep) {
+        app->swallow_touch_until_release = true;
+    }
+    if (app->swallow_touch_until_release) {
+        if (!pressed) {
+            app->swallow_touch_until_release = false;
+        }
+        return;   /* stays RELEASED -- LVGL never sees this press at all */
+    }
+
+    if (pressed) {
         data->point.x = (int32_t)point.x;
         data->point.y = (int32_t)point.y;
         data->state   = LV_INDEV_STATE_PRESSED;
     }
+}
+
+uint32_t ui_app_touch_idle_ms(const ui_app_t *app)
+{
+    int64_t idle_us = esp_timer_get_time() - app->last_touch_us;
+    if (idle_us < 0) {
+        idle_us = 0;   /* clock went backwards; "just touched" is the safe read */
+    }
+    int64_t idle_ms = idle_us / 1000;
+    if (idle_ms > (int64_t)UINT32_MAX) {
+        return UINT32_MAX;   /* saturate, never wrap -- see the header */
+    }
+    return (uint32_t)idle_ms;
+}
+
+void ui_app_set_display_asleep(ui_app_t *app, bool asleep)
+{
+    app->display_asleep = asleep;
 }
 
 static void ui_app_task(void *arg)
@@ -186,6 +236,14 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     app->ui_diag_last_publish_us = 0;
     app->max_loop_us              = 0;
 
+    /* Seeded to "now", not 0: a device that boots and is never touched must
+     * stay lit for the full svc_power timeout, not read as having been idle
+     * since the epoch and sleep on the first tick. Same reasoning as
+     * svc_power's own last_playback_activity_us. */
+    app->last_touch_us                 = esp_timer_get_time();
+    app->display_asleep                = false;
+    app->swallow_touch_until_release  = false;
+
     /* Art-forward redesign: no custom heap_caps_malloc()+lv_mem_add_pool()
      * dance here anymore -- see sdkconfig.defaults.esp32s3's own comment on
      * CONFIG_LV_USE_CLIB_MALLOC for the real, confirmed-on-real-hardware
@@ -227,7 +285,9 @@ bool ui_app_create(ui_app_t *app, const ui_app_cfg_t *cfg)
     lv_indev_set_type(app->lv_touch_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(app->lv_touch_indev, touch_read_cb);
     lv_indev_set_display(app->lv_touch_indev, app->lv_disp);
-    lv_indev_set_user_data(app->lv_touch_indev, app->hal_touch);
+    /* The whole ui_app_t, not app->hal_touch -- touch_read_cb also needs
+     * last_touch_us/display_asleep now (see its own comment). */
+    lv_indev_set_user_data(app->lv_touch_indev, app);
 
     if (!ui_router_create(&app->router, app->lv_disp)) {
         ESP_LOGE(TAG, "ui_router_create failed");

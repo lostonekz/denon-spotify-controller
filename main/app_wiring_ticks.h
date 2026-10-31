@@ -10,6 +10,29 @@
 
 #include "app_ctx.h"
 
+/* Periods for the trampolines below. Moved here from app_wiring.c (which
+ * was at the 400-line gate) and kept here since: a job's cadence and the
+ * function it drives are one fact, and splitting them across two files was
+ * how the OTA/artwork relay nearly got registered at the wrong period. */
+#define SETTINGS_TICK_PERIOD_US    ((int64_t)1 * 1000000)
+#define DIAGNOSTICS_TICK_PERIOD_US ((int64_t)5 * 1000000)
+#define NET_TIME_TICK_PERIOD_US    ((int64_t)1 * 1000000)
+#define SVC_OTA_TICK_PERIOD_US     ((int64_t)1 * 1000000)
+#define HEALTH_GATE_TICK_PERIOD_US ((int64_t)1 * 1000000)
+#define DENON_SETTINGS_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
+/* No INTENT_DISPATCH_TICK_PERIOD_US anymore: intent dispatch is a task
+ * blocking on the queue rather than a periodic job polling it, which beats
+ * the ~20-50ms docs/ROADMAP.md Phase 3 asked for outright (dispatch starts
+ * on arrival) while removing 50 scheduler wakeups/second. */
+#define OTA_ARTWORK_RELAY_TICK_PERIOD_US ((int64_t)1 * 1000000)
+/* 250ms, not the 1s every other relay uses: this period is also the
+ * touch-to-wake latency, since the wake-touch is swallowed by the UI and
+ * only reaches svc_power via this poll. 1s would make a dark panel feel
+ * broken. 4 wakeups/second is a twelfth of the 20ms intent-dispatch poll
+ * this project already judged wasteful and deleted, for a tick that is two
+ * integer comparisons and a usually-empty queue drain. */
+#define POWER_TICK_PERIOD_US ((int64_t)250 * 1000)
+
 void settings_tick_trampoline(void *ctx);
 void diagnostics_tick_trampoline(void *ctx);
 void net_time_tick_trampoline(void *ctx);
